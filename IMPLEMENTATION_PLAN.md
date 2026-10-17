@@ -59,7 +59,7 @@ large-output, long-history, replay, cancellation and budget regressions.
 - [x] Persistent SSE dataset events, multi-agent ownership and reconnect state.
 - [x] Sphinx requirements, architecture, protocols, examples and Mermaid diagrams.
 - [x] Full Python/Vue/build/docs checks, native NOOA + real-worker end-to-end acceptance.
-- [ ] Browser verification, public GitHub push/Pages and precise capability report.
+- [x] Browser verification, public GitHub push/Pages and precise capability report.
 
 Update this checklist with executable evidence as stages finish. Do not represent
 test fixtures as an independent production diagnosis or claim untested modalities.
@@ -72,3 +72,5 @@ test fixtures as an independent production diagnosis or claim untested modalitie
 - Native CodeAct plus real scientific worker exercises a generated subset script, persistent scope restoration and return.
 - Real GLM generated and executed both subset scripts and verified 90 -> 10 -> 4 -> 10 -> 90 on existing discovery data. Its initial invalid sample-ID evidence was rejected and corrected; independent review reached the 600-second acceptance deadline. This is not recorded as a passed end-to-end review. A read-only real-model follow-up delivered in 38.5 seconds with verified references and not_required/delivered status, explicitly preserving the prior review timeout. Browser selection, lineage and return-to-root were exercised. No credentials or research records are published.
 - External data-source connectors and knowledge graph integration remain explicitly deferred by the user. Only the typed injectable boundary and already supplied local imports are implemented.
+
+Public delivery verified: implementation commit `e1d406e`; GitHub Actions run `39046159078` built and deployed successfully. The new dynamic dataset, feature isolation, quality and requirements pages returned HTTP 200 with the expected content. Final follow-up records this verification without changing runtime code.

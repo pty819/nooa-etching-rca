@@ -23,3 +23,5 @@
 | 公网HTTP | 首页、架构、agent、算法、自审页及首页CSS/SVG均200 |
 
 以上云端结果明确对应首次部署；中文搜索缺陷是在首次部署后浏览器实测发现的，随后加入修复和可执行回归。最新提交的云端状态以[Actions实际运行](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)为准，读者也可直接检索“背氦”验证索引与浏览器逻辑。
+
+动态数据升级实现提交`e1d406e`的[构建与部署39046159078](https://github.com/pty819/nooa-etching-rca/actions/runs/39046159078)均成功；动态数据、特征隔离、自审和需求页面均HTTP 200且包含新增内容。后续验证记录提交不改变运行代码。
