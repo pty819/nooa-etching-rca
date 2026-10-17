@@ -22,7 +22,7 @@ class Links(HTMLParser):
         attrs = dict(attrs)
         if attrs.get("id"):
             self.ids.add(attrs["id"])
-        for name in ("href", "src", "data" if tag == "object" else "src"):
+        for name in ("href", "src", "data") if tag == "object" else ("href", "src"):
             if attrs.get(name):
                 self.links.append(attrs[name])
 
@@ -96,7 +96,12 @@ def check():
         "chapters": len(list(SOURCE.glob("*.md"))),
         "mermaid_sources": len(diagrams),
         "rendered_svg": len(images),
-        "local_links": sum(len(x.links) for x in parsed.values()),
+        "local_links": sum(
+            1
+            for page in parsed.values()
+            for value in page.links
+            if not urlsplit(value).scheme and not urlsplit(value).netloc
+        ),
         "failures": failures,
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

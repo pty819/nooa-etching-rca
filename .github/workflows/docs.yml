@@ -54,7 +54,9 @@ jobs:
       - name: Strict Sphinx build with actual SVG rendering
         run: uv run --no-sync sphinx-build -n -W --keep-going -b html docs/sphinx docs/_build/html
       - name: Validate links, diagrams and requirement traceability
-        run: uv run --no-sync python scripts/check_docs.py
+        run: |
+          uv run --no-sync python scripts/check_docs.py
+          node scripts/check_search.mjs
       - name: Keep HTML artifact for review
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

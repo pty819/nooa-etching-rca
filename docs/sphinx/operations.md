@@ -12,7 +12,7 @@ make docs-check
 python3 -m http.server 8877 --directory docs/_build/html
 ```
 
-打开 `http://127.0.0.1:8877`。首次安装Mermaid CLI会下载其渲染浏览器；在Linux构建机还需Chromium依赖与CJK字体。文档渲染browser的CI参数不属于研究worker的安全策略，不能混为一谈。Makefile使用独立 `.venv-docs`，不会卸载正在使用的研究环境。
+打开 `http://127.0.0.1:8877`。首次安装Mermaid CLI会下载其渲染浏览器；在Linux构建机还需Chromium依赖与CJK字体。中文全文检索使用jieba、领域词典与Sphinx搜索语言兼容扩展；生成的stemmer和中文索引由Node实际执行检查。文档渲染browser的CI参数不属于研究worker的安全策略，不能混为一谈。Makefile使用独立 `.venv-docs`，不会卸载正在使用的研究环境。
 
 ## 研究环境
 

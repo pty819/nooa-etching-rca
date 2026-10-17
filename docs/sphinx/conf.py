@@ -1,9 +1,11 @@
 """Documentation-only build: never imports the research runtime or reads credentials."""
 
-from pathlib import Path
 import runpy
+import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "docs/sphinx/_ext"))
 runpy.run_path(str(ROOT / "scripts/build_doc_reference.py"), run_name="__main__")
 
 project = "NOOA Etching RCA"
@@ -11,7 +13,9 @@ author = "pty819"
 copyright = "2026, pty819"
 release = "0.1.0"
 language = "zh_CN"
-extensions = ["myst_parser", "sphinxcontrib.mermaid", "sphinx.ext.mathjax"]
+extensions = ["myst_parser", "sphinxcontrib.mermaid", "sphinx.ext.mathjax", "chinese_search"]
+html_search_language = "zh"
+html_search_options = {"dict": str(ROOT / "docs/sphinx/search-dict.txt")}
 source_suffix = {".md": "markdown", ".rst": "restructuredtext"}
 root_doc = "index"
 exclude_patterns = ["_build", "diagrams/**", "_static/**"]

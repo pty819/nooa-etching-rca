@@ -6,6 +6,7 @@ docs-clean:
 	rm -rf docs/_build
 docs-check: docs
 	UV_PROJECT_ENVIRONMENT=.venv-docs uv run --no-sync python scripts/check_docs.py
+	node scripts/check_search.mjs
 test:
 	uv run pytest -q
 	uv run ruff check src tests scripts
