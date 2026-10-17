@@ -19,7 +19,7 @@
 
 ## 运行要求与复现
 
-完整自由代码研究当前要求 **macOS sandbox-exec、Python3.12/3.13、uv和Node**。文档可在Linux构建，不需要API密钥；这不代表研究执行后端已支持Linux。
+完整自由代码研究当前要求 **macOS sandbox-exec、Python3.12/3.13、uv和Node22.13+**。文档可在Linux构建，不需要API密钥；这不代表研究执行后端已支持Linux。
 
 ```bash
 uv sync --python 3.12
@@ -28,7 +28,7 @@ npm run build --prefix frontend
 cp .env.example .env
 # 在本机编辑.env，填写自己的模型服务信息；不要提交真实key。
 uv run factor-demo generate-etch --data data/etching-v2 --runs 90
-uv run factor-demo serve --host 127.0.0.1 --port 8765
+uv run --env-file .env factor-demo serve --host 127.0.0.1 --port 8765
 ```
 
 打开 <http://127.0.0.1:8765>，创建研究并选择custom provider。生成器拒绝覆盖已有数据。CLI及单分支恢复说明见[操作指南](docs/sphinx/operations.md)。
