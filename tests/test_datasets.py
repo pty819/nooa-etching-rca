@@ -422,3 +422,39 @@ def test_merge_inherits_step_boundaries_from_all_declared_parents(tmp_path):
     steps = pl.read_parquet(s.path(result["id"]) / schema.steps_file)
     assert set(steps["run_id"]) == set(index["run_id"])
     assert result["rows"] == 32 and len(result["parents"]) == 2
+
+
+def test_merge_rejects_conflicting_parent_asset_directories(tmp_path):
+    seed = tmp_path / "seed.csv"
+    seed.write_text("sample_id,value\nbase,1\n")
+    prepare_generic_workspace(seed, tmp_path / "case")
+    s = DatasetSession(tmp_path / "case")
+    parents = []
+    schema = DatasetSchema(modality="mixed", asset_column="asset_path")
+    for name, content in [("one", "first observation"), ("two", "different observation")]:
+        source = tmp_path / name
+        (source / "assets/object").mkdir(parents=True)
+        (source / "assets/object/note.txt").write_text(content)
+        pl.DataFrame({"sample_id": [name], "asset_path": ["assets/object"]}).write_parquet(
+            source / "samples.parquet"
+        )
+        parents.append(s.registry.register(source, schema, name))
+    work = s.run / "workspace"
+    output = work / "merged"
+    output.mkdir()
+    pl.DataFrame(
+        {"sample_id": ["one", "two"], "asset_path": ["assets/object", "assets/object"]}
+    ).write_parquet(output / "samples.parquet")
+    (work / "merge.py").write_text("# merge two supplied asset collections")
+    with pytest.raises(ValueError, match="Ambiguous parent asset"):
+        s.derive(
+            DatasetDerivation(
+                title="ambiguous merge",
+                parents=[p["id"] for p in parents],
+                output_dir="merged",
+                source="merge.py",
+                reason="retain both sources",
+                relation="merge",
+                data_schema=schema,
+            )
+        )

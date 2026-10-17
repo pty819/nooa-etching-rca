@@ -37,6 +37,15 @@ def canonical(value) -> bytes:
     ).encode()
 
 
+def asset_fingerprint(path: Path):
+    if path.is_file():
+        return ("file", file_hash(path))
+    return (
+        "directory",
+        {str(p.relative_to(path)): file_hash(p) for p in sorted(path.rglob("*")) if p.is_file()},
+    )
+
+
 class AcquisitionProvider(Protocol):
     """Future unified data-entry provider. No network/KG implementation is installed."""
 
@@ -190,7 +199,7 @@ class DatasetRegistry:
                         if not candidates:
                             raise ValueError("Referenced asset is missing: " + name)
                         if len(candidates) > 1 and any(
-                            c.is_file() and file_hash(c) != file_hash(candidates[0])
+                            asset_fingerprint(c) != asset_fingerprint(candidates[0])
                             for c in candidates[1:]
                         ):
                             raise ValueError(

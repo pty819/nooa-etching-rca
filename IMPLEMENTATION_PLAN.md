@@ -66,7 +66,7 @@ test fixtures as an independent production diagnosis or claim untested modalitie
 
 ## Executed evidence (2026-10-17)
 
-- Full Python regression: 83 passed, 100 upstream warnings, macOS/Python 3.12.
+- Full Python regression: 84 passed, 100 upstream warnings, macOS/Python 3.12.
 - Vue: 11 passed; TypeScript/Vite production build passed.
 - Ruff passed. Strict Sphinx: 26 HTML pages, 24 rendered Mermaid SVGs; local links and Chinese search checks passed.
 - Native CodeAct plus real scientific worker exercises a generated subset script, persistent scope restoration and return.
@@ -74,3 +74,5 @@ test fixtures as an independent production diagnosis or claim untested modalitie
 - External data-source connectors and knowledge graph integration remain explicitly deferred by the user. Only the typed injectable boundary and already supplied local imports are implemented.
 
 Public delivery verified: implementation commit `e1d406e`; GitHub Actions run `39046159078` built and deployed successfully. The new dynamic dataset, feature isolation, quality and requirements pages returned HTTP 200 with the expected content. Final follow-up records this verification without changing runtime code.
+
+Final publication audit reproduced and fixed ambiguous same-name parent asset directories. Recursive file-content fingerprints now reject conflicting directory assets; the regression failed before the repair and passed afterward.
