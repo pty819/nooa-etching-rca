@@ -1,0 +1,85 @@
+# 安装、复现、恢复与文档部署
+
+## 无API的文档构建
+
+文档构建只安装docs组，不导入NOOA运行时，不需要provider、数据集或任何模型key。Python依赖由uv.lock锁定，Mermaid CLI由docs/package-lock.json锁定。
+
+```bash
+git clone https://github.com/pty819/nooa-etching-rca.git
+cd nooa-etching-rca
+npm ci --prefix docs
+make docs-check
+python3 -m http.server 8877 --directory docs/_build/html
+```
+
+打开 `http://127.0.0.1:8877`。首次安装Mermaid CLI会下载其渲染浏览器；在Linux构建机还需Chromium依赖与CJK字体。文档渲染browser的CI参数不属于研究worker的安全策略，不能混为一谈。Makefile使用独立 `.venv-docs`，不会卸载正在使用的研究环境。
+
+## 研究环境
+
+当前完整自由研究要求macOS、Python3.12/3.13、uv与Node。先同步运行依赖和前端：
+
+```bash
+uv sync --python 3.12
+npm ci --prefix frontend
+npm run build --prefix frontend
+cp .env.example .env
+# 在本机编辑.env，填写自己的endpoint、model和key；不提交真实值。
+```
+
+使用custom时配置FACTOR_API_STYLE、FACTOR_API_BASE、FACTOR_MODEL、FACTOR_API_KEY。现成GLM/MiniMax名称需要自行建立私有provider配置，仓库不提供可用key。`probe`会真实调用供应商，不能在不知情时当作普通离线检查。
+
+## 生成并核对数据
+
+```bash
+uv run factor-demo generate-etch --data data/etching-v2 --runs 90
+uv run factor-demo validate-etch --data data/etching-v2
+uv run factor-demo preview-etch --data data/etching-v2
+```
+
+生成器拒绝覆盖非空目录；要复现实验应保留seed、sample period和manifest，新数据用新目录。默认命令会生成完整原始曲线、特征、隐藏状态和本地预览，随后只把发现范围导给研究会话。仓库未捆绑生成后的二进制数据。
+
+## 启动前端和CLI研究
+
+```bash
+uv run factor-demo serve --host 127.0.0.1 --port 8765
+```
+
+浏览器新建研究时选择etching-v2与自己的custom模型。也可直接用CLI：
+
+```bash
+uv run factor-demo autoresearch --data data/etching-v2 \
+  --run runs/my-case --provider custom \
+  --message '分别比较三个业务时段，先核对目录和批次，保存可复核证据。'
+
+uv run factor-demo autoresearch-chat --run runs/my-case --provider custom \
+  --message '请检验这些高权重是否来自同一个闭环，并区分反证和未测机制。'
+
+uv run factor-demo autoresearch-chat --run runs/my-case --provider custom \
+  --mode discuss --message '解释目前已证实什么，尚不能区分什么。'
+
+uv run factor-demo autoresearch-audit --run runs/my-case
+```
+
+运行中通过Web向选中方向发送消息会进入该轮指导；空闲时发送会开始新轮。恢复指定分支应在当前主任务结束后进行，不重新派生整套父研究。目录中的Python变量不会跨进程恢复，需重新运行已保存的初始化脚本。
+
+## 服务重启和异常恢复
+
+```{mermaid} diagrams/recovery.mmd
+:caption: HTTP host恢复依靠进程身份与mission核对，不凭同一个PID就认定是原worker。
+:alt: 服务启动检查活跃标记，匹配进程则接管，不匹配则清理并标记中断；显式继续时从文件和NOOA快照建立新mission。
+```
+
+正常停止优先用界面按钮，让已有输出、快照及预算完成结算。强制退出时不要删除runs来“修复状态”；重启服务后检查主/子状态和错误记录。保留原始任务ID和脚本，有助于判断某一步是否已经产生副作用。旧报告只有mission匹配才会被认作该分支本轮结果。
+
+## GitHub Actions与Pages
+
+```{mermaid} diagrams/publish.mmd
+:caption: PR只构建验证；主分支才部署Pages。Actions不运行付费模型请求，也不接触已有研究数据。
+:alt: 文档依赖和Mermaid安装后生成引用、严格构建并检查；上传产物，只有主分支非PR允许独立部署job发布静态站。
+```
+
+workflow以push、pull_request和workflow_dispatch触发。构建job安装Python3.12、Node22和锁定uv，构建SVG与静态站；权限为contents:read。部署job依赖构建成功，只在本仓库main分支的非PR事件运行，使用pages:write和id-token:write及github-pages环境。PR不能通过此工作流获取生产模型key，因为工作流根本不需要模型secret。
+
+首次仓库需启用Pages的workflow发布源；后续直接推送main即可重新构建。站点在仓库子路径下，必须同时检查首页、章节、CSS与SVG的200状态，不能只看GitHub Actions绿色。部署操作和图源均可由仓库历史审查。
+
+更多CLI解析细节见[自动生成的CLI参考](_generated/cli.md)。

@@ -1,0 +1,13 @@
+flowchart TB
+  CW[总窗口272000] --> IN[可用输入222000]
+  CW --> OUT[预留输出50000]
+  IN --> TH[原生摘要阈值177600]
+  ST[稳定物理与统计TextSkill] --> CT[Context动态块]
+  TASK[当前任务与最近假设] --> CT
+  FEED[用户反馈与分支状态] --> CT
+  HIST[NOOA完整事件] --> SUM[TokenBudgetSummarizer]
+  TH --> SUM
+  SUM --> SHORT[约8000字符摘要与最近10条事件]
+  SHORT --> CT
+  HIST --> STORE[完整事件仍存SQLite]
+  CT --> MODEL[受预算约束的模型请求]

@@ -1,0 +1,9 @@
+flowchart TB
+  UI[交互层：Vue组件与useResearch] --> HTTP[服务层：web与web_worker]
+  HTTP --> ORCH[编排层：autoresearch与ResearchManager]
+  ORCH --> AG[Agent契约：研究、修订、审查、局部反思]
+  AG --> SDK[NOOA原生策略、Context、Storage、Channel、Broker]
+  AG --> WORK[应用工具：PythonWorkspace与MarkdownReplies]
+  WORK --> DATA[文件层：公开输入、工作区、证据快照]
+  ORCH --> AUDIT[审计层：结构化引用、事件、预算与运行状态]
+  SIM[独立数据层：recipe、物理模型、特征提取] --> DATA

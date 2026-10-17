@@ -1,0 +1,403 @@
+"""NOOA CodeActV2 scientist with general code execution and durable dialogue."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from nooa import Agent, hidden, strategy
+
+from .research_models import (
+    CandidateAssessment,
+    EvidenceRef,  # noqa: F401 - public CodeAct type
+    Hypothesis,  # noqa: F401 - public CodeAct type
+    ResearchReply,
+    ReviewResult,
+)
+
+with hidden:
+    import json
+    import uuid
+
+    from nooa import TextSkill
+    from nooa.config import LoopGuardConfig
+    from nooa.config.strategy_config import CodeActConfig, PredictConfig, ReflexionConfig
+    from nooa.runtime.restrictions import RESTRICTED_MODULES, RestrictionsConfig
+    from nooa.storage import nosnapshot
+    from nooa.strategies import CodeActV2, PredictStrategy
+
+    from .capabilities import Capabilities
+    from .evidence import research_postcondition, research_precondition
+    from .live_events import MarkdownReplies, artifact_index
+    from .live_events import public_artifact_path as artifact_path
+    from .local_reflection import TrackedReflexion, reflection_active
+    from .reply_writer import StreamingReplyWriter
+    from .research_workspace import PythonWorkspace
+    from .strategy_factory import reflection_strategy
+
+
+class AutoresearchAgent(Agent):
+    """与设备专家协作的自主刻蚀研究员。自己选择算法、写Python并依据证据反驳和修订假设。
+
+    专家擅长排除有数学证据的错误方向，不负责替你设计所有实验。重要原则见physics/statistics技能。
+    外层python_cell调用公开方法；所有研究代码在隔离worker运行，首选Polars。不得访问隐藏真值。
+    外层python_cell的cwd/文件系统不属于研究工作目录，不在外层open/read_parquet/savefig。
+    把完整源代码交给run_code或write_file+run_script；worker的cwd就是workspace，input在../input。
+    PNG等二进制由run_code中的plt.savefig('artifacts/plot.png')直接生成；write_file只接受文本。
+    重要数值保存为CSV/Parquet并返回EvidenceRef（id/claim/artifact/column/where/statistic/value/unit/run_ids）。
+    value表示where筛出的单行单元格；聚合用mean/count等明确操作。Hypothesis.evidence_ids引用这些ID；
+    supported/weak必须有结构化引用。summary中的数值也应提供evidence条目，不用文字代替数学证据。
+    可以通过spawn_research自主分派不同问题，通过wait_research/read_branch_result获取结果再综合复核。
+    子任务使用同一公开数据、独立工作区和历史；提供任务及必要证据路径，不能假定它读过父会话。
+    分支证据可通过branches/<id>/artifacts/...读取和引用。各方向可动态合并、指导或取消。
+    review检查后可能进入revise，须定向修复具体问题，不无限重跑探索；审查通过不等于根因已证实。
+    使用inspect_candidate可做有界原生Reflexion，它只读已有证据，不发消息、不改研究文件。
+    所有面向用户的文字通过reply(message_id,brief,image_paths,table_paths)发送，普通工具参数不推流。
+    研究进展是阶段性观察；最终交接由宿主在审查完成后发布，research返回结构化ResearchReply即可。
+    不复制最终全文多次，不编造数字或路径；记录失败与反证，不凑十个原因。变量跨进程不保留，文件和历史会保存。
+    """
+
+    _workspace: Annotated[PythonWorkspace, hidden, nosnapshot]
+    _replies: Annotated[MarkdownReplies | None, hidden, nosnapshot]
+
+    _reply_writer: Annotated[StreamingReplyWriter | None, hidden, nosnapshot]
+
+    _manager: Annotated[object, hidden, nosnapshot]
+    _policy: Annotated[Capabilities, hidden, nosnapshot]
+    _knowledge_registry: Annotated[object, hidden, nosnapshot]
+    _last_verification: Annotated[dict, hidden, nosnapshot]
+    _reflection_verdicts: Annotated[list, hidden, nosnapshot]
+    physics: Annotated[TextSkill, nosnapshot]
+    statistics: Annotated[TextSkill, nosnapshot]
+
+    @hidden
+    def __init__(
+        self, workspace, replies=None, reply_writer=None, manager=None, policy=None, **kwargs
+    ):
+        super().__init__(**kwargs)
+        self._workspace = workspace
+        self._replies = replies
+        self._reply_writer = reply_writer
+        self._manager = manager
+        self._policy = policy or Capabilities.load()
+        self._knowledge_registry = None
+        self._last_verification = {}
+        self._reflection_verdicts = []
+        self.round_number = 0
+
+    @hidden
+    async def _writable(self):
+        if reflection_active.get():
+            raise PermissionError(
+                "Local reflection is read-only; no research execution, writes, replies or task mutations"
+            )
+        if not getattr(self._workspace, "research_enabled", True):
+            raise PermissionError("Discussion mode cannot execute research or modify tasks")
+
+    async def run_code(self, code: str, timeout_s: int = 120) -> dict:
+        """Execute ANY scientific Python source in your persistent work directory.
+
+        Imports, function definitions, files, plots and subprocess scripts are all
+        supported. Print concise results; full output and source are journaled.
+        timeout_s is a hard worker deadline, capped at 300 seconds. On timeout the
+        worker and its children are killed; files remain, live variables reset.
+        """
+        await self._writable()
+        if not getattr(self._workspace, "research_enabled", True):
+            raise PermissionError(
+                "Discussion mode: use existing artifacts and reply; research execution is disabled"
+            )
+        return await self._workspace.execute(code, timeout_s)
+
+    async def write_file(self, path: str, content: str) -> dict:
+        """Save ANY text/source file within the research workspace, without running it.
+
+        A convenience for long scripts: avoids nested code-string quoting. Use
+        run_script to execute a saved script with checked exit status; run_code for exploration.
+        """
+        await self._writable()
+        if not getattr(self._workspace, "research_enabled", True):
+            raise PermissionError("Discussion mode cannot modify research files")
+        target = (self._workspace.work / path).resolve()
+        if not target.is_relative_to(self._workspace.work):
+            raise ValueError("Choose a path within the research workspace")
+        code = (
+            "from pathlib import Path\n"
+            f"_target = Path({str(target)!r})\n"
+            "_target.parent.mkdir(parents=True, exist_ok=True)\n"
+            f"print('saved', _target.name, _target.write_text({content!r}), 'characters')"
+        )
+        return await self._workspace.execute(code)
+
+    async def run_script(
+        self, path: str, args: list[str] | None = None, timeout_s: int = 120
+    ) -> dict:
+        """Run a saved Python script with live stdout/stderr and checked exit status.
+
+        path must resolve inside workspace. args are passed literally, without a
+        shell. A nonzero script exit returns ok=false; inspect the saved traceback.
+        Long-lived worker variables are separate from the script process namespace.
+        """
+        await self._writable()
+        if not getattr(self._workspace, "research_enabled", True):
+            raise PermissionError("Discussion mode cannot run scripts")
+        target = (self._workspace.work / path).resolve()
+        if not target.is_relative_to(self._workspace.work) or target.suffix != ".py":
+            raise ValueError("Choose a Python script inside the research workspace")
+        command = [str(target), *(args or [])]
+        code = (
+            "import subprocess, sys\n"
+            f"subprocess.run([sys.executable, '-u', *{command!r}], check=True)"
+        )
+        return await self._workspace.execute(code, timeout_s)
+
+    async def reply(
+        self,
+        message_id: str,
+        brief: str,
+        image_paths: list[str] | None = None,
+        table_paths: list[str] | None = None,
+    ) -> dict:
+        """Actively send a Markdown response via an independent plain-text stream.
+
+        Provide clear reply points and exact verified evidence in brief, including
+        numbers/units/limitations to preserve. A tool-free generation writes the
+        user-facing text; the result includes the delivered Markdown for review.
+        No literal-string convention, argument preview or tool_stream is needed.
+        Only existing artifacts/ PNG/JPEG/WebP/GIF and CSV files may be attached.
+        Ordinary tools execute with complete arguments and stream only real output.
+        """
+        if reflection_active.get():
+            raise PermissionError("Local reflection cannot publish replies")
+        if self._replies is None:
+            raise RuntimeError("Reply channel is unavailable")
+        if self._reply_writer is not None:
+            return await self._reply_writer.send(message_id, brief, image_paths, table_paths)
+        return self._replies.send(message_id, brief, image_paths, table_paths)
+
+    async def list_artifacts(self, prefix: str = "artifacts") -> list[dict]:
+        """List actual artifact paths, types and sizes before referencing a file."""
+        return artifact_index(self._workspace.run, prefix)
+
+    async def read_artifact(self, path: str, max_chars: int = 12000) -> dict:
+        """Read existing UTF-8 Markdown/JSON/CSV/text/source, without executing code."""
+        target = artifact_path(self._workspace.run, path)
+        if target.suffix.lower() not in {".md", ".json", ".csv", ".txt", ".py"}:
+            raise ValueError("Choose a text artifact; images can be attached with reply")
+        if target.stat().st_size > 8_000_000:
+            raise ValueError("File too large; use research code to select a smaller evidence table")
+        content = target.read_text()
+        cap = min(32000, max(100, max_chars))
+        return {"path": path, "content": content[:cap], "truncated": len(content) > cap}
+
+    @strategy(
+        CodeActV2(
+            config=CodeActConfig(
+                max_iterations=None,
+                max_retries=Capabilities.load().validation_retries,
+                cell_timeout=330,
+                restrictions=RestrictionsConfig(restricted_imports=RESTRICTED_MODULES),
+                loop_guard=LoopGuardConfig(
+                    repeat_threshold=Capabilities.load().loop_repeat_threshold,
+                    window=Capabilities.load().loop_window,
+                )
+                if Capabilities.load().loop_guard
+                else None,
+                preconditions=[research_precondition],
+                postconditions=[research_postcondition],
+            )
+        )
+    )
+    async def research(self, message: str) -> ResearchReply:
+        """Continue autonomous research using the full conversation and new input.
+
+        Choose and implement your own experiments. Test expert feedback rather
+        than mechanically accepting it, revise hypotheses, persist code/evidence,
+        and return a checkpoint with questions the expert can efficiently judge.
+        """
+        ...
+
+    @strategy(PredictStrategy(config=PredictConfig(max_retries=1)))
+    async def discuss(self, message: str) -> ResearchReply:
+        """Discuss existing evidence using the full history, without running code.
+
+        Do not introduce newly computed numbers. Clarify, challenge or interpret
+        prior findings; distinguish proposed future experiments from completed work.
+        """
+        ...
+
+    @strategy(
+        CodeActV2(
+            config=CodeActConfig(
+                max_iterations=None,
+                max_retries=Capabilities.load().validation_retries,
+                cell_timeout=330,
+                restrictions=RestrictionsConfig(restricted_imports=RESTRICTED_MODULES),
+                loop_guard=LoopGuardConfig(
+                    repeat_threshold=Capabilities.load().loop_repeat_threshold,
+                    window=Capabilities.load().loop_window,
+                )
+                if Capabilities.load().loop_guard
+                else None,
+                preconditions=[research_precondition],
+                postconditions=[research_postcondition],
+            )
+        )
+    )
+    async def chat(self, message: str) -> ResearchReply:
+        """用中文讨论已有证据。可读取已有artifact并调用reply实时回复。
+
+        本模式不允许研究代码执行或修改文件。只解释已完成结果，不生成新计算值。
+        所有给用户看的文字用reply发送；最后return_result只用于保存结构化交接。
+        """
+        ...
+
+    @strategy(
+        CodeActV2(
+            config=CodeActConfig(
+                max_iterations=None,
+                max_retries=Capabilities.load().validation_retries,
+                cell_timeout=330,
+                loop_guard=LoopGuardConfig(),
+                preconditions=[research_precondition],
+                postconditions=[research_postcondition],
+                restrictions=RestrictionsConfig(restricted_imports=RESTRICTED_MODULES),
+            )
+        )
+    )
+    async def revise(self, message: str, previous: ResearchReply, review: dict) -> ResearchReply:
+        """针对证据检查或审查指出的具体问题补证并修订，不重复无关实验。
+
+        保留原证据和失败记录，返回完整修订后的ResearchReply与EvidenceRef；预算不足时明确降级结论。
+        通过审查只表示检查通过，不表示已证明具体部件根因。
+        """
+        ...
+
+    @strategy(PredictStrategy(config=PredictConfig(max_retries=1)))
+    async def review(self, evidence_bundle: dict) -> ReviewResult:
+        """独立审查给定报告与已复算的证据包，返回结构化问题单，不运行研究代码。
+
+        检查闭环重复证据、设定值与step均值、lot伪重复、小样本置换下界、选择泄漏、
+        OPLS变换与恢复比例、以及关联越界到部件根因。每个问题须指向具体claim_id/证据ID，
+        写明反证和可执行检查；没有证据支持的疑问应列为warning而非捏造blocking问题。
+        claim_id只填写一个现存hypothesis/evidence ID或summary/scope；多个引用放evidence_ids数组。
+        不得把review自身格式错误当作研究报告的问题；文字里以标点列举多个ID本身不构成科学错误。
+        若材料不够复核，应说明缺口，不能假装重新读取文件或重算过。只审查当前报告，不重写历史。
+        """
+        ...
+
+    @strategy(
+        TrackedReflexion(
+            base=CodeActV2(config=CodeActConfig(max_iterations=6, max_retries=1, cell_timeout=60)),
+            config=ReflexionConfig(max_iterations=Capabilities.load().reflexion_iterations),
+        )
+    )
+    async def _inspect_candidate(self, candidate: ResearchReply) -> CandidateAssessment:
+        """只读审查候选结果，检查证据一致性、反证和观测边界，返回评估及建议。
+        可读现有artifact，不执行研究代码、不写文件、不发消息或派生任务。不是根因认证。
+        """
+        ...
+
+    async def inspect_candidate(self, candidate: ResearchReply) -> dict:
+        """Run bounded native experimental Reflexion over existing candidate evidence.
+
+        No research execution, file mutations, publishing or task mutations are allowed
+        during the local reflection. The last native verdict is returned explicitly;
+        budget exhaustion is never silently labelled as a passed review.
+        """
+        await self._writable()
+        if not self._policy.reflexion_enabled:
+            raise PermissionError("Local Reflexion is disabled in capabilities policy")
+        candidate = ResearchReply.model_validate(candidate)
+        self._reflection_verdicts = []
+        token = reflection_active.set(True)
+        result = None
+        interrupted = None
+        try:
+            result = await self._inspect_candidate(
+                candidate, _strategy=reflection_strategy(self._policy)
+            )
+        except BaseException as error:  # noqa: BLE001 - persist verdicts on cancellation, then re-raise
+            interrupted = error
+        finally:
+            reflection_active.reset(token)
+        accepted = bool(
+            self._reflection_verdicts and self._reflection_verdicts[-1]["is_satisfactory"]
+        )
+        budget_stopped = (interrupted is None or isinstance(interrupted, Exception)) and getattr(
+            self._llm, "budget_exhausted", False
+        )
+        record = {
+            "status": "interrupted"
+            if interrupted and not budget_stopped
+            else "passed"
+            if accepted and not interrupted and not budget_stopped
+            else "budget_exhausted",
+            "assessment": result.model_dump() if result else None,
+            "verdicts": self._reflection_verdicts,
+            "experimental": True,
+            "reason": "shared_model_budget"
+            if budget_stopped
+            else type(interrupted).__name__
+            if interrupted
+            else "native_verdict",
+        }
+        folder = self._workspace.run / "reflections"
+        folder.mkdir(exist_ok=True)
+        (folder / (uuid.uuid4().hex + ".json")).write_text(
+            json.dumps(record, ensure_ascii=False, indent=2)
+        )
+        if self._workspace.events:
+            self._workspace.events.emit(
+                "reflection.end", status=record["status"], reason=record["reason"]
+            )
+        if interrupted and record["status"] == "interrupted":
+            raise interrupted
+        return record
+
+    async def spawn_research(
+        self, task: str, title: str = "", evidence_paths: list[str] | None = None
+    ) -> dict:
+        """Start an independent CodeActV2 researcher; give a focused question and optional evidence files.
+        Returns an agent_id immediately; the branch owns its code, workspace, history,
+        summary and review. Use wait_research for results; repeated identical live tasks are deduplicated.
+        """
+        await self._writable()
+        if self._manager is None:
+            raise RuntimeError("Research coordinator is unavailable")
+        return await self._manager.spawn(task, title, evidence_paths or [])
+
+    async def list_research(self) -> list[dict]:
+        """List persisted research branches and actual lifecycle/review status."""
+        return self._manager.list() if self._manager else []
+
+    async def wait_research(
+        self, agent_ids: list[str] | None = None, timeout_s: int = 30
+    ) -> list[dict]:
+        """Wait up to timeout_s for a result; does not cancel branches on timeout.
+        Returns completed results and current statuses. Read final evidence and review
+        before accepting a branch's conclusions. Can be called again while jobs run.
+        """
+        if self._manager is None:
+            return []
+        return await self._manager.wait(agent_ids, timeout_s)
+
+    async def read_branch_result(self, agent_id: str) -> dict:
+        """Read a completed branch's report, review and verified artifact paths."""
+        if self._manager is None:
+            raise RuntimeError("Research coordinator is unavailable")
+        return self._manager.result(agent_id)
+
+    async def guide_research(self, agent_id: str, message: str) -> dict:
+        """Send expert guidance to one active branch; it enters that agent's native event channel."""
+        await self._writable()
+        return self._manager.guide(agent_id, message)
+
+    async def cancel_research(self, agent_id: str) -> dict:
+        """Cancel one branch and clean up its workers, retaining evidence and events."""
+        await self._writable()
+        return await self._manager.cancel(agent_id)
+
+    async def resume_research(self, agent_id: str, message: str) -> dict:
+        """Resume a saved, inactive branch using its history/files and the shared mission budget."""
+        await self._writable()
+        return await self._manager.resume(agent_id, message)

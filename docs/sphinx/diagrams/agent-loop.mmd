@@ -1,0 +1,16 @@
+flowchart TB
+  T[当前任务、专家反馈、假设台账] --> C[CodeActV2生成完整python_cell]
+  C --> TOOL[调用公开工具]
+  TOOL --> EXEC[科学worker执行自由代码]
+  EXEC --> RES[真实输出与失败记录]
+  RES --> C
+  TOOL --> BR[动态分支调度]
+  BR --> C
+  C --> RET[return_result结构化候选]
+  RET --> G[前后置校验]
+  G -->|可修正错误| C
+  G -->|通过| REV[Predict审查]
+  REV -->|明确阻断问题| FIX[revise定向修订]
+  FIX --> G
+  REV --> END[保存检查点与最终发布]
+  LG[LoopGuard与共享预算] -. 约束 .-> C

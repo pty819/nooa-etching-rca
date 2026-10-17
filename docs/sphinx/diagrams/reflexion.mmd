@@ -1,0 +1,20 @@
+sequenceDiagram
+  participant A as 主研究
+  participant R as 局部Reflexion
+  participant C as CodeActV2基础策略
+  participant E as 已保存证据
+  A->>R: inspect_candidate候选
+  R->>R: 开启只读副作用限制
+  loop 最多两次基础执行
+    R->>C: execute_nested
+    C->>E: 只读文本证据
+    E-->>C: 实际内容与截断信息
+    C-->>R: CandidateAssessment
+    R->>R: 原生反思判词并保存
+    alt is_satisfactory为true
+      R-->>A: passed及判词
+    else 未通过
+      R->>C: 反馈用于下一次尝试
+    end
+  end
+  R-->>A: 耗尽时返回候选与明确未通过状态

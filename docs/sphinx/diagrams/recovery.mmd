@@ -1,0 +1,10 @@
+flowchart TB
+  BOOT[HTTP服务启动] --> META[读取active-mission标记]
+  META --> CHECK{PID、创建时间、run路径与task均匹配？}
+  CHECK -->|是| ATTACH[接管观察同一web_worker]
+  ATTACH --> WAIT[等待原任务退出，不新建研究]
+  WAIT --> END[保存task.end并移除标记]
+  CHECK -->|否| STALE[标记中断，清理孤立活跃分支]
+  STALE --> RESUME[用户显式继续主研究或指定分支]
+  RESUME --> FILES[加载独立文件与NOOA快照]
+  FILES --> NEW[新mission与新worker]

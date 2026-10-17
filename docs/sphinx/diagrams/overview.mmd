@@ -1,0 +1,18 @@
+flowchart TB
+  R[固定Recipe与硬件状态] --> S[200通道时间序列与11步边界]
+  S --> F[Polars特征与量测]
+  F --> P[仅导出公开train/dev]
+  P --> A[CodeActV2主研究]
+  A --> B[独立研究分支]
+  B --> A
+  A --> C[通用Python实验与保存证据]
+  C --> V[确定性证据门禁]
+  V --> Q[Predict结构化审查]
+  Q -->|通过或明确受限| D[Markdown正文与图表交接]
+  Q -. 定向补证 .-> A
+  D --> E[设备专家排除和质疑]
+  E -. 多轮指导 .-> A
+  T[隐藏真值与test] --> H[宿主独立后验核查]
+  D --> H
+  classDef guarded fill:#fff0d5,stroke:#ad7a24,color:#634411
+  class P,V,Q,T,H guarded

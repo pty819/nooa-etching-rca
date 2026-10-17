@@ -1,0 +1,11 @@
+flowchart TB
+  PR[PR或推送或手动触发] --> DOC[仅安装锁定的文档依赖]
+  DOC --> NODE[安装锁定Mermaid CLI与字体]
+  NODE --> AST[从源码生成配置和模块参考]
+  AST --> BUILD[Sphinx严格构建并渲染SVG]
+  BUILD --> CHECK[章节、内部链接、SVG与发布范围检查]
+  CHECK --> ART[上传站点构建产物]
+  ART --> GATE{主分支且非PR？}
+  GATE -->|是| DEPLOY[独立低权限Pages部署job]
+  GATE -->|否| PREVIEW[仅验证与保留构建产物]
+  DEPLOY --> WEB[公网文档站]

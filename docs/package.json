@@ -1,0 +1,6 @@
+{
+  "name": "nooa-etching-rca-docs",
+  "private": true,
+  "scripts": { "diagrams": "mmdc --help" },
+  "devDependencies": { "@mermaid-js/mermaid-cli": "12.0.0" }
+}

@@ -1,0 +1,16 @@
+flowchart TB
+  R[主研究、分支、摘要、审查、正文] --> L[SQLite原子预留token]
+  L -->|不能预留| STOP[明确预算耗尽并保存已有结果]
+  L -->|预留成功| B[原生Broker获得请求许可]
+  B -->|派发前拒绝| Z[撤回token预留，费用为零]
+  B --> API[真实供应商请求]
+  API --> U{有有效usage？}
+  U -->|是| SET[按usage结算]
+  U -->|否或请求失败| EST[保守估算结算]
+  API --> RETRY[允许的一次SDK重试]
+  RETRY --> B
+  RETRY --> UNK[前次未知usage按窗口补计]
+  UNK --> SET
+  SET --> UI[预算快照与SSE]
+  EST --> UI
+  Z --> UI

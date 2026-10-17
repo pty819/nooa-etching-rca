@@ -1,0 +1,11 @@
+{
+  "context_window": 272000,
+  "max_output_tokens": 50000,
+  "thinking": true,
+  "reasoning_effort": "max",
+  "anthropic_thinking_budget": 32000,
+  "summary_threshold": null,
+  "preserve_recent": 10,
+  "summary_target_chars": 8000,
+  "request_timeout": 1800
+}

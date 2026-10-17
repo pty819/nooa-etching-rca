@@ -1,0 +1,14 @@
+stateDiagram-v2
+  [*] --> queued: 主研究派生
+  queued --> starting: 获得分支并发槽
+  starting --> running: 子进程身份已保存
+  running --> completed: 检查点完成
+  running --> failed: 子进程异常
+  queued --> cancelled: 启动前取消
+  starting --> cancelled: 协调取消
+  running --> cancelled: 定向或整轮停止
+  running --> interrupted: 进程丢失或父host失效
+  completed --> queued: 显式恢复，新mission
+  failed --> queued: 显式恢复
+  cancelled --> queued: 显式恢复
+  interrupted --> queued: 显式恢复

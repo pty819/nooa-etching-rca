@@ -1,0 +1,13 @@
+flowchart TB
+  A[01 prepare：20 s] --> B[02 heat_1：45 s]
+  B --> C[03 stable_1：20 s]
+  C --> D[04 etch_1：55 s]
+  D --> E[05 cool_1：30 s]
+  E --> F[06 heat_2：40 s]
+  F --> G[07 stable_2：18 s]
+  G --> H[08 etch_2：65 s]
+  H --> I[09 cool_2：35 s]
+  I --> J[10 release_handoff：16 s]
+  J --> K[11 exit：12 s]
+  classDef plasma fill:#dbece8,stroke:#19685f,stroke-width:3px
+  class D,H plasma

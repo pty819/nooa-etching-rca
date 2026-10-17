@@ -1,0 +1,27 @@
+.venv/
+.venv-docs/
+.vendor/
+.research-cache/
+.env
+.secrets/
+data/
+runs/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+frontend/node_modules/
+frontend/dist/
+
+# Local investigation archives; the public Sphinx source is the explicit exception.
+docs/*
+!docs/sphinx/
+!docs/package.json
+!docs/package-lock.json
+!docs/puppeteer.json
+docs/node_modules/
+docs/sphinx/_generated/
+docs/_build/
+build/
+merged_counts.png

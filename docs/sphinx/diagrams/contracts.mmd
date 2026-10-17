@@ -1,0 +1,45 @@
+classDiagram
+  direction TB
+  class ResearchReply {
+    str summary
+    list hypotheses
+    list evidence
+    list artifacts
+    list next_experiments
+  }
+  class Hypothesis {
+    str id
+    str status
+    str mathematical_evidence
+    list evidence_ids
+    str alternative_explanation
+    str falsification_test
+  }
+  class EvidenceRef {
+    str id
+    str artifact
+    str column
+    dict where
+    str statistic
+    object value
+    str unit
+    list run_ids
+  }
+  class ReviewResult {
+    list issues
+    list strengths
+    list limitations
+  }
+  class ReviewIssue {
+    str category
+    str severity
+    str claim_id
+    list evidence_ids
+    str suggested_check
+  }
+  ResearchReply "1" *-- "0..*" Hypothesis
+  ResearchReply "1" *-- "0..*" EvidenceRef
+  Hypothesis ..> EvidenceRef : evidence_ids
+  ReviewResult "1" *-- "0..*" ReviewIssue
+  ReviewIssue ..> EvidenceRef : references
+  ReviewIssue ..> Hypothesis : claim_id

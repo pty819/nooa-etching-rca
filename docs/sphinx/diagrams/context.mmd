@@ -1,0 +1,23 @@
+flowchart TB
+  E[设备专家] <--> U[Vue 3研究工作台]
+  U <-->|HTTP与持久SSE| W[FastAPI本地服务]
+  W --> P[独立web_worker]
+  subgraph M[单轮研究边界]
+    P --> A[主AutoresearchAgent]
+    A --> N[NOOA上下文与策略]
+    A --> X[隔离科学worker]
+    A --> C[ResearchManager]
+    C --> B1[分支host与独立worker]
+    C --> B2[分支host与独立worker]
+    N --> G[共享AdmissionBroker与token账本]
+    B1 --> G
+    B2 --> G
+  end
+  G <-->|模型协议| L[外部模型服务]
+  X --> I[只读公开输入]
+  X --> O[本方向可写workspace]
+  P --> D[NOOA SQLite与快照]
+  P --> S[根ui.sqlite事件序号]
+  B1 --> S
+  B2 --> S
+  S --> W

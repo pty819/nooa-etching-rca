@@ -1,0 +1,15 @@
+flowchart TB
+  subgraph HOST[可信编排主机：并非恶意agent完整隔离]
+    KEY[私有模型凭据] --> API[模型客户端]
+    GEN[生成器、test与隐藏真值] --> VERIFY[宿主后验核验]
+    AG[NOOA编排与公开工具] --> API
+    AG --> CTRL[worker控制通道]
+  end
+  subgraph WORK[科学worker边界]
+    CTRL --> PY[通用Python代码]
+    PY --> IN[只读本案例公开输入]
+    PY --> OUT[仅写本方向workspace]
+    NET[网络拒绝]
+    ENV[显式环境白名单，不传密钥]
+  end
+  DOC[公开源仓库包含生成算法] --> BLIND[严格盲评必须另行隔离源码与场景设计者]

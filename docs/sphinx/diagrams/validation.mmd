@@ -1,0 +1,13 @@
+flowchart TB
+  CODE[当前源码与配置] --> UNIT[物理、特征、证据和预算测试]
+  CODE --> INTEG[真实NOOA和HTTP确定性模型测试]
+  INTEG --> PROC[真实分支进程、取消与恢复]
+  CODE --> UI[Vue交互、重放与路径测试]
+  UNIT --> CLAIM[逐项明确可验证承诺]
+  PROC --> CLAIM
+  UI --> CLAIM
+  LIVE[真实GLM的限定任务验收] --> CLAIM
+  SCI[历史科学研究与真值后验对照] --> LIMIT[暴露未识别机制和旧数字错误]
+  CLAIM --> REVIEW[文档反思与需求追踪]
+  LIMIT --> REVIEW
+  REVIEW --> PUB[严格Sphinx构建与公开部署]

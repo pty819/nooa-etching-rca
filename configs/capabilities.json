@@ -1,0 +1,16 @@
+{
+  "loop_guard": true,
+  "loop_repeat_threshold": 7,
+  "loop_window": 15,
+  "review_enabled": true,
+  "max_revisions": 2,
+  "reflexion_enabled": true,
+  "reflexion_iterations": 2,
+  "max_concurrent_branches": 2,
+  "max_branches_per_turn": 8,
+  "max_model_in_flight": 2,
+  "max_model_calls": 256,
+  "max_total_tokens": 4000000,
+  "branch_timeout_s": 1800,
+  "validation_retries": 3
+}

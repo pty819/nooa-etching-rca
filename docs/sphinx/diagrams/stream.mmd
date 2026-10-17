@@ -1,0 +1,20 @@
+sequenceDiagram
+  participant U as Vue界面
+  participant H as HTTP服务
+  participant A as 研究host
+  participant M as 共享预算模型客户端
+  participant W as 科学worker
+  participant E as 根ui.sqlite
+  U->>H: POST消息及request_id和agent_id
+  H->>A: 启动后台轮次或投递指导
+  A->>M: 研究生成，工具参数完整收集
+  M-->>E: 实际推理增量，不转发工具参数片段
+  A->>W: 执行完整研究代码
+  W-->>E: stdout和stderr增量
+  W-->>A: 完成状态与保存产物
+  A->>M: reply正文生成，tools为空
+  M-->>E: reply.delta及offset
+  A->>E: reply.commit及附件Markdown
+  U->>H: SSE或Last-Event-ID续传
+  E-->>H: 全局序号事件
+  H-->>U: 按agent身份重建消息与工具
