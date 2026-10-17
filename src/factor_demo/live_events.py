@@ -133,6 +133,7 @@ class MarkdownReplies:
         self.committed = set()
         self.publication = "progress"
         self.review_status = None
+        self.final_appendix = ""
 
     def url(self, name: str) -> str:
         public_artifact_path(self.events.run, name)
@@ -145,6 +146,8 @@ class MarkdownReplies:
 
     def prepare(self, markdown: str, image_paths=None, table_paths=None) -> tuple[str, list]:
         body = markdown
+        if self.publication == "final" and self.final_appendix:
+            body += "\n\n" + self.final_appendix
         attachments = []
         for name in image_paths or []:
             path = public_artifact_path(self.events.run, name)

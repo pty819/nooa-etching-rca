@@ -17,6 +17,7 @@
 | R11 | provider_stream.py、live_events.py、useResearch.ts | test_streaming.py、workspace.test.ts | 真流、续传、去重；写请求ID不覆盖所有科学副作用 |
 | R12 | rounds修订、SQLite快照、web恢复 | test_web_recovery.py、test_orchestration.py | 文件和事件可恢复；内存变量不恢复、非exactly-once |
 | R13 | docs/sphinx、docs.yml、check_docs.py | 严格构建与站点检查 | 公开文档与源仓；不是线上研究服务 |
+| R14 | formula_models.py、formula_lab.py、formula_runner.py、FormulaStudies.vue | test_formula_lab.py、formulas.test.ts | 任意Python标量特征、四类固定模型与强制交接；不是任意模型、因果证明或独立最终测试 |
 
 ## 八项NOOA能力的具体组合
 

@@ -1,0 +1,17 @@
+stateDiagram-v2
+    [*] --> Registered: 快照公式与固定协议
+    Registered --> Running: 原子领取比较
+    Running --> Succeeded: 保存特征、逐片预测和宿主分数
+    Running --> Failed: 计算或数据错误
+    Running --> Interrupted: 取消或宿主退出
+    Failed --> Running: 重试缺失模型，保留旧尝试
+    Interrupted --> Running: 检查进程身份后恢复
+    Failed --> Excluded: 明确科学理由
+    Registered --> Excluded: 明确科学理由
+    Succeeded --> Replaying: 所有有效集合 × 模型完成
+    Replaying --> Frozen: 特征、预测、分数一致
+    Replaying --> Unresolved: 重算不一致
+    Frozen --> Stale: 新版本、新组合或排除
+    Stale --> Running: 补齐新增比较
+    Frozen --> [*]: 带选择ID交接
+    Unresolved --> Registered: 修正后登记新版本

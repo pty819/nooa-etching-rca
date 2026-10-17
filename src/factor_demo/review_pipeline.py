@@ -90,6 +90,10 @@ def budget_checkpoint(agent):
     """Deliver saved branch pointers without inventing a merged scientific conclusion."""
     rows = agent._manager.store.list() if agent._manager else []
     saved = [agent._manager.result(r["id"]) for r in rows if r["state"] == "completed"]
+    lab = getattr(agent, "_formula_lab", None)
+    studies = lab.bound() if lab else []
+    from .formula_models import FormulaHandoff
+
     return ResearchReply(
         summary="本轮共享模型预算已耗尽，尚未形成通过审查的主报告。已有文件和分支检查点已保存，可继续本会话。"
         + "".join(
@@ -102,6 +106,13 @@ def budget_checkpoint(agent):
         next_experiments=[
             "继续本会话，读取已保存的分支证据，完成合并和审查；不重复运行已完成的分支。"
         ],
+        formula_comparison=FormulaHandoff(
+            study_id=studies[-1]["id"],
+            status="incomplete",
+            reason="模型预算耗尽，尚未完成公式比较交接",
+        )
+        if studies
+        else None,
     )
 
 
@@ -117,6 +128,8 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
             raise
         report = budget_checkpoint(agent)
         verified = EvidenceVerifier(run, events).verify(report)
+        if getattr(agent, "_formula_lab", None):
+            verified["formula_comparison"] = agent._formula_lab.handoff(report.formula_comparison)
         revision = folder / "revisions" / "attempt_00"
         freeze_revision(run, revision, report, verified)
         outcome = {
@@ -133,6 +146,8 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
     attempt = 0
     while True:
         verified = EvidenceVerifier(run, events).verify(report)
+        if getattr(agent, "_formula_lab", None):
+            verified["formula_comparison"] = agent._formula_lab.handoff(report.formula_comparison)
         revision = folder / "revisions" / f"attempt_{attempt:02d}"
         freeze_revision(run, revision, report, verified)
         if not policy.review_enabled:

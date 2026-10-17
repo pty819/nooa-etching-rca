@@ -208,6 +208,10 @@ async def research_turn(
                 "mission": events.task_id,
                 "revision": review["revision"],
             }
+            if mode == "research":
+                formula_result = agent._formula_lab.handoff(reply.formula_comparison)
+                payload["formula_result"] = formula_result
+                payload["formula_markdown"] = agent._formula_lab.markdown(formula_result)
             write_json(folder / "reply.json", payload)
             write_json(run / "latest_reply.json", payload)
             write_json(folder / "review.json", review)
@@ -216,7 +220,9 @@ async def research_turn(
             if mode == "research":
                 replies.publication = "final"
                 replies.review_status = review["status"]
-                final_text = render_reply(payload)
+                # Appended by the host on commit even if the text writer omits the table.
+                replies.final_appendix = payload.get("formula_markdown", "")
+                final_text = render_reply(payload, include_formula=False)
                 import polars as pl
                 from nooa.unifiedllm.admission import AdmissionCallCapError
 
@@ -319,7 +325,7 @@ async def research_turn(
             events.close()
 
 
-def render_reply(reply: dict) -> str:
+def render_reply(reply: dict, include_formula=True) -> str:
     lines = [reply["summary"], ""]
     for h in reply["hypotheses"]:
         lines += [
@@ -338,6 +344,8 @@ def render_reply(reply: dict) -> str:
         lines += ["专家待审：", "", *["- " + x for x in reply["questions_for_expert"]], ""]
     if reply["next_experiments"]:
         lines += ["后续实验：", "", *["- " + x for x in reply["next_experiments"]], ""]
+    if include_formula and reply.get("formula_markdown"):
+        lines += [reply["formula_markdown"], ""]
     return "\n".join(lines)
 
 

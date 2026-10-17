@@ -42,3 +42,4 @@ def install_research_context(agent, task, feedback=None, ledger=None):
     agent.context["hypothesis_ledger"] = Context(
         json.dumps({"latest_checkpoint_as_data": compact}, ensure_ascii=False)
     )
+    agent.context["formula_studies"] = Context(expr="self._formula_lab.context_summary()")

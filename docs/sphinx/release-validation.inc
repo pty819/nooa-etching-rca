@@ -2,14 +2,15 @@
 
 | 检查 | 本次本地结果 |
 |---|---|
-| Python完整回归 | 51 passed，0 failed；保留80条上游弃用/类型提示警告 |
-| Vue交互回归 | 6 passed，0 failed |
+| Python完整回归 | 59 passed，0 failed；保留80条上游弃用/类型提示警告 |
+| Vue交互回归 | 8 passed，0 failed |
 | TypeScript与Vite | 类型检查与生产构建通过 |
 | 扩展科学库 | aeon/statsmodels纳入显式依赖；真实worker完成DTW、三维归一化、回归、PCA、SciPy找峰、图表保存及JIT缓存检查 |
+| 专家公式流程 | 实际worker与原生CodeAct调用通过；三公式+一组合在现有刻蚀公开数据上完成8次模型比较并重算一致，保留NaN失败与修订；不是新的独立诊断 |
 | Ruff | src、tests、scripts检查通过 |
 | Sphinx | nitpicky与warning-as-error严格构建通过 |
-| Mermaid | 19张图全部实际渲染为SVG；检查其引用、XML与viewBox |
-| 本地链接与资产 | 23个HTML页面，全部站内链接/资源引用无缺失；动态数量见Actions日志，不把外部链接或重复属性算作已验收本地链接 |
+| Mermaid | 21张图全部实际渲染为SVG；检查其引用、XML与viewBox |
+| 本地链接与资产 | 24个HTML页面，全部站内链接/资源引用无缺失；动态数量见Actions日志，不把外部链接或重复属性算作已验收本地链接 |
 | 源仓发布范围 | Git跟踪文件与本地配置key字面值检查通过；未提交原始对话、runs、data、凭据与缓存 |
 | 浏览器 | 已检查公网首页中文导航、架构SVG、布局与溢出，修正首页边距 |
 | 中文搜索回归 | 修复Sphinx的JS构造器不匹配，补jieba及领域词典；生成脚本实际执行通过，四个中文词在索引中，本地浏览器检索“背氦”已返回相关章节 |

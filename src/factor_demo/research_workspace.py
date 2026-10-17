@@ -61,7 +61,7 @@ class PythonWorkspace:
     remains outside it; this is not a containment claim about adversarial agents.
     """
 
-    def __init__(self, run: Path, events=None, research_enabled=True):
+    def __init__(self, run: Path, events=None, research_enabled=True, read_scope_root=None):
         self.run = run.resolve()
         self.work = self.run / "workspace"
         self.process = None
@@ -75,6 +75,7 @@ class PythonWorkspace:
         self.lock = asyncio.Lock()
         self.events = events
         self.research_enabled = research_enabled
+        self.read_scope_root = Path(read_scope_root or self.run).resolve()
         self.protocol_reader = None
         self.protocol_transport = None
         self.pumps = []
@@ -120,7 +121,8 @@ class PythonWorkspace:
             "(version 1)(allow default)(deny network*)"
             # Match filesystem paths, leaving inherited protocol pipes usable.
             f'(deny file-read-data (require-all (require-any (subpath "/Users") '
-            f"(subpath {json.dumps(str((self.run / 'input').resolve().parent))})) {excludes}))"
+            f"(subpath {json.dumps(str((self.run / 'input').resolve().parent))}) "
+            f"(subpath {json.dumps(str(self.read_scope_root))})) {excludes}))"
             f'(deny file-write* (require-all (regex #"^/") '
             f"(require-not (subpath {json.dumps(str(self.work))})) "
             '(require-not (literal "/dev/null"))))'

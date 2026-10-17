@@ -169,6 +169,12 @@ def research_postcondition(agent, result, call):
                 "Research branches are still active; wait for their results or cancel them explicitly before the final checkpoint"
             )
         agent._last_verification = EvidenceVerifier(workspace.run, workspace.events).verify(result)
+        lab = getattr(agent, "_formula_lab", None)
+        if lab is not None:
+            try:
+                agent._last_verification["formula_comparison"] = lab.handoff(result.formula_comparison)
+            except ValueError as error:
+                raise EvidenceError(str(error)) from error
 
 
 def snapshot_ignore(directory, names):

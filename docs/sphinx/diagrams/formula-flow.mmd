@@ -1,0 +1,21 @@
+flowchart TB
+    E["专家多轮指导<br/>传感器、step、时间窗与融合想法"] --> A["CodeActV2<br/>自由编写科学Python"]
+    A --> P["固定比较协议<br/>两label · 单recipe · 输入哈希<br/>lot折 · 指标 · 模型与参数"]
+    A --> F["版本化公式快照<br/>表达式、单位、参数、代码<br/>修订原因与旧版本保留"]
+    P --> X
+    F --> X["隔离提取进程<br/>仅声明的原始列与step<br/>每run一个标量，无标签输入"]
+    X --> M["可信模型执行器<br/>每折训练内拟合预处理<br/>单公式及组合 × 同一模型套件"]
+    M --> H["宿主从逐片预测算分<br/>保存CV、dev、模型与环境"]
+    H --> C{"必要比较全部完成？"}
+    C -- "否" --> I["明确未完成<br/>保留失败与原因，允许后续继续"]
+    C -- "是" --> R["重算第一名<br/>原始特征、预测和分数逐项一致"]
+    R --> G{"重跑一致且选择有效？"}
+    G -- "否" --> I
+    G -- "是" --> D["确定性公式报告 + Predict审查<br/>中文解释、版本、排名、下载<br/>Vue实时显示与SSE恢复"]
+    D -. "反馈与新版本使选择失效" .-> E
+    classDef domain fill:#eaf3ed,stroke:#397452,color:#193d28
+    classDef trusted fill:#eaf0f9,stroke:#4b6d99,color:#233c5b
+    classDef stop fill:#fff2df,stroke:#aa7837,color:#734c1e
+    class E,A,F domain
+    class P,X,M,H,R,D trusted
+    class C,G,I stop

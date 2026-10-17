@@ -6,6 +6,7 @@ from typing import Annotated
 
 from nooa import Agent, hidden, strategy
 
+from .formula_models import FormulaHandoff, FormulaPlan, FormulaSpec  # noqa: F401 - CodeAct types
 from .research_models import (
     CandidateAssessment,
     EvidenceRef,  # noqa: F401 - public CodeAct type
@@ -27,6 +28,7 @@ with hidden:
 
     from .capabilities import Capabilities
     from .evidence import research_postcondition, research_precondition
+    from .formula_lab import FormulaLab
     from .live_events import MarkdownReplies, artifact_index
     from .live_events import public_artifact_path as artifact_path
     from .local_reflection import TrackedReflexion, reflection_active
@@ -68,6 +70,7 @@ class AutoresearchAgent(Agent):
     _knowledge_registry: Annotated[object, hidden, nosnapshot]
     _last_verification: Annotated[dict, hidden, nosnapshot]
     _reflection_verdicts: Annotated[list, hidden, nosnapshot]
+    _formula_lab: Annotated[object, hidden, nosnapshot]
     physics: Annotated[TextSkill, nosnapshot]
     statistics: Annotated[TextSkill, nosnapshot]
 
@@ -84,6 +87,7 @@ class AutoresearchAgent(Agent):
         self._knowledge_registry = None
         self._last_verification = {}
         self._reflection_verdicts = []
+        self._formula_lab = FormulaLab(workspace.run, workspace.events) if workspace else None
         self.round_number = 0
 
     @hidden
@@ -109,6 +113,65 @@ class AutoresearchAgent(Agent):
                 "Discussion mode: use existing artifacts and reply; research execution is disabled"
             )
         return await self._workspace.execute(code, timeout_s)
+
+    async def create_formula_study(self, plan: FormulaPlan) -> dict:
+        """Freeze a pairwise formula comparison: public train/dev, lot folds, metric, models.
+
+        Use for expert-proposed custom operators and multi-round formula selection.
+        All versions in one study share the same data, folds, model parameters and ranking.
+        Changing labels/metric/models/data requires a new study. No test runs are used.
+        """
+        await self._writable()
+        return self._formula_lab.create(plan)
+
+    async def register_formula(self, study_id: str, formula: FormulaSpec) -> dict:
+        """Snapshot an arbitrary Python raw-trace operator as an immutable formula version.
+
+        First write artifacts/name.py defining extract(trace, steps, params) -> scalar or None.
+        trace contains only time_s, step_id and declared sensors/steps; steps contains
+        step_id/start_s/end_s. No labels are supplied. Implement windows and cross-sensor
+        fusion freely in Python. Supply the exact human expression, units and parameters.
+        Re-registering a name requires change_reason and creates v2, preserving v1; each version is a required singleton
+        comparison until explicitly retired. mean(a*b) is different from mean(a)*mean(b).
+        """
+        await self._writable()
+        return self._formula_lab.register(study_id, formula)
+
+    async def evaluate_formula_set(self, study_id: str, formula_refs: list[str]) -> dict:
+        """Evaluate one formula or a combination of registered versions against ALL planned models.
+
+        Source is recomputed from raw traces, preprocessing is fitted within each training
+        fold, dev predictions and host-calculated metrics are saved. Failures remain visible;
+        retry resumes missing models, not completed work. Never supply invented score tables.
+        """
+        await self._writable()
+        return await self._formula_lab.evaluate(study_id, formula_refs)
+
+    async def read_formula_study(self, study_id: str = "") -> dict:
+        """Read durable formula versions, frozen protocols, failed trials and selections across rounds/branches."""
+        if study_id:
+            return self._formula_lab.public(self._formula_lab.get(study_id))
+        return {"studies": self._formula_lab.catalog()}
+
+    async def retire_formula_set(self, study_id: str, set_id: str, reason: str) -> dict:
+        """Explicitly exclude a scientifically invalid/failed candidate with an auditable reason.
+
+        This changes the comparison universe and invalidates the previous selection.
+        Do not exclude a legitimate candidate merely to improve the winning score.
+        """
+        await self._writable()
+        return self._formula_lab.retire(study_id, set_id, reason)
+
+    async def freeze_formula_selection(self, study_id: str) -> dict:
+        """Select best among tried formulas only after complete, equal-budget comparisons.
+
+        Recompute winning features/model and require identical predictions and scores.
+        Return its study_id/status/selection_id in ResearchReply.formula_comparison.
+        If blocked, return status='incomplete' with an honest reason instead of a winner.
+        New versions invalidate the selection; previous selections remain in history.
+        """
+        await self._writable()
+        return await self._formula_lab.freeze(study_id)
 
     async def write_file(self, path: str, content: str) -> dict:
         """Save ANY text/source file within the research workspace, without running it.

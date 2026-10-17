@@ -24,6 +24,7 @@ import {
   X,
 } from "lucide-vue-next";
 import ResearchMessage from "./components/ResearchMessage.vue";
+import FormulaStudies from "./components/FormulaStudies.vue";
 import { useResearch } from "./useResearch";
 import { asset } from "./api";
 const {
@@ -66,6 +67,12 @@ const names: Record<string, string> = {
   cancel_research: "停止研究分支",
   resume_research: "恢复研究分支",
   inspect_candidate: "局部自反思",
+  create_formula_study: "固定公式比较协议",
+  register_formula: "登记公式版本",
+  evaluate_formula_set: "比较公式与模型",
+  read_formula_study: "读取公式研究记录",
+  retire_formula_set: "记录候选排除理由",
+  freeze_formula_selection: "重跑并确认最佳公式",
   review: "结构化证据审查",
   revise: "定向修订",
 };
@@ -73,6 +80,7 @@ const starters = [
   "比较三个时段，提出带数学证据的怀疑方向。",
   "检查哪些高权重特征只是共模漂移或控制补偿。",
   "展示已有图表，解释维修后仍有哪些残留异常。",
+  "定义跨传感器特征，用相同 lot 验证与 Logistic、树模型比较，返回最佳公式。",
 ];
 function fileSize(size: number) {
   return size < 1024 ? size + " B" : (size / 1024).toFixed(1) + " KB";
@@ -357,6 +365,9 @@ function statusLabel(value: string) {
           <FolderOpen :size="14" />研究产物
           <span>{{ s.artifacts.length }}</span>
         </button>
+        <button :class="{ on: s.tab === 'formulas' }" @click="s.tab = 'formulas'; loadArtifacts()">
+          <FlaskConical :size="14" />公式比较<span>{{ s.formulaStudies.length }}</span>
+        </button>
       </div>
       <div v-if="s.tab === 'live'" class="panel-scroll">
         <div class="current-stage">
@@ -484,6 +495,9 @@ function statusLabel(value: string) {
         <div v-if="!s.active && latest" class="end-note">
           本轮记录已保存，可继续提问或切换到仅讨论。
         </div>
+      </div>
+      <div v-else-if="s.tab === 'formulas'" class="panel-scroll files">
+        <FormulaStudies :studies="s.formulaStudies" :session="s.selected" />
       </div>
       <div v-else class="panel-scroll files">
         <p class="files-note">

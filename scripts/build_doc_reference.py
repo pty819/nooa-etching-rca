@@ -93,6 +93,7 @@ def generate():
         ("runtime.py", {"RuntimeSettings"}),
         ("capabilities.py", {"Capabilities"}),
         ("research_models.py", None),
+        ("formula_models.py", None),
         ("web.py", {"NewSession", "NewMessage"}),
     ]:
         relative = "src/factor_demo/" + filename

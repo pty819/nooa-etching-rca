@@ -178,6 +178,12 @@ def observe_agent(agent, events: LiveEvents):
             "cancel_research",
             "resume_research",
             "inspect_candidate",
+            "create_formula_study",
+            "register_formula",
+            "evaluate_formula_set",
+            "read_formula_study",
+            "retire_formula_set",
+            "freeze_formula_selection",
             "review",
             "revise",
         }:

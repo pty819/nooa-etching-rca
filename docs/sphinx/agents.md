@@ -84,3 +84,8 @@ TokenBudgetSummarizer保留最近10条事件，目标摘要约8000字符。27200
 阶段性 `reply` 由agent主动调用；每次内部计算自动留日志，但不自动生成一篇长报告。候选报告有假设、数学证据、替代解释与反证，最终正文经独立撰写器整理，撰写器无工具且不得增加数字或改变证据等级。
 
 尚未将“每次改算必须列传感器全名、step、旧值、新值、修改原因、结论变化”全部变成硬字段。传感器与特征名目前可包含在报告和证据中，但详细程度存在模型自由度。此缺口在[文档自审](quality.md)列为后续工作，不能用prompt要求代替已实现schema。
+
+
+## 专家公式研究工具
+
+原生CodeActV2可调用create_formula_study、register_formula、evaluate_formula_set、read_formula_study、retire_formula_set及freeze_formula_selection。只读讨论与Reflexion禁止变更；Context跨轮注入研究ID、版本和选择状态。研究一旦登记，postcondition要求有效选优或明确未完成，Predict获得宿主证据，正文最终提交附带确定性公式报告。任意Python算子和四类固定比较模型的边界见[公式研究](formula-research.md)。

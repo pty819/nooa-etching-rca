@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .formula_models import FormulaHandoff
+
 
 class EvidenceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -40,6 +42,7 @@ class ResearchReply(BaseModel):
     artifacts: list[str] = Field(default_factory=list)
     next_experiments: list[str] = Field(default_factory=list)
     questions_for_expert: list[str] = Field(default_factory=list)
+    formula_comparison: FormulaHandoff | None = None
 
 
 class ReviewIssue(BaseModel):

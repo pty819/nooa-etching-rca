@@ -1634,3 +1634,20 @@ h1 {
     gap: 3px;
   }
 }
+
+.formula-study { padding: 16px 0 22px; border-bottom: 1px solid var(--border, #deded8); }
+.formula-study h3 { margin: 0 0 10px; font-size: 16px; }
+.formula-study small { color: #74786f; line-height: 1.6; overflow-wrap: anywhere; }
+.formula-state { color: #9a641c; font-size: 13px; }
+.formula-state.verified { color: #377c59; }
+.formula-version, .formula-protocol, .formula-failure { padding: 12px 0; font-size: 12px; border-bottom: 1px solid #e8e9e3; overflow-wrap: anywhere; }
+.formula-study summary { cursor: pointer; line-height: 1.6; }
+.formula-study pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+.formula-table-scroll { overflow-x: auto; margin: 14px 0; }
+.formula-table { width: 100%; border-collapse: collapse; font-size: 11px; text-align: left; }
+.formula-table td, .formula-table th { padding: 8px 5px; border-bottom: 1px solid #e8e9e3; }
+.formula-table small { display: block; }
+.formula-failure, .formula-excluded { color: #a15d42; font-size: 12px; }
+.formula-study a { font-size: 12px; color: #487656; }
+
+.formula-champion { padding: 10px 12px; background: #e8efe5; border-radius: 6px; color: #345d40; line-height: 1.7; font-size: 12px; }

@@ -235,7 +235,16 @@ def create_app(project: Path | None = None) -> FastAPI:
             "artifacts": public_artifact_index(run),
             "branches": BranchStore(run).list(),
             "last_event_id": last_id,
+            "formula_studies": __import__("factor_demo.formula_lab", fromlist=["FormulaLab"])
+            .FormulaLab(run)
+            .catalog(),
         }
+
+    @app.get("/api/sessions/{name}/formula-lab")
+    async def formula_lab(name):
+        from .formula_lab import FormulaLab
+
+        return {"studies": FormulaLab(session(name)).catalog()}
 
     async def execute(run, body, job):
         events = LiveEvents(run, body.request_id)
@@ -564,6 +573,8 @@ def create_app(project: Path | None = None) -> FastAPI:
         }
         if target.suffix.lower() in images:
             return FileResponse(target, media_type=images[target.suffix.lower()])
+        if target.suffix.lower() in {".joblib", ".parquet"}:
+            return FileResponse(target, media_type="application/octet-stream", filename=target.name)
         if target.suffix.lower() not in {".csv", ".json", ".md", ".txt", ".py", ".parquet"}:
             raise HTTPException(400, "Unsupported artifact type")
         return FileResponse(target, media_type="text/plain; charset=utf-8", filename=target.name)

@@ -16,6 +16,7 @@ import type {
   Tool,
   Artifact,
   Branch,
+  FormulaStudy,
 } from "./types";
 
 export function useResearch() {
@@ -45,6 +46,7 @@ export function useResearch() {
     newBelow: false,
     pending: false,
     branches: [] as Branch[],
+    formulaStudies: [] as FormulaStudy[],
     selectedAgent: "main",
     activeAgent: "main",
     agentPhases: {} as Record<string, string>,
@@ -132,6 +134,7 @@ export function useResearch() {
       if (s.selected === name) {
         s.artifacts = data.artifacts;
         s.branches = data.branches || [];
+        s.formulaStudies = data.formula_studies || [];
       }
     } catch {}
   }
@@ -159,6 +162,12 @@ export function useResearch() {
           if (agentId === s.selectedAgent) s.phase = v;
         }
       };
+      if (e.type.startsWith('formula.') && !replay) {
+        void loadArtifacts();
+        if (e.type === 'formula.evaluation.start') phase('正在比较专家公式');
+        if (e.type === 'formula.replay.start') phase('正在重算最佳公式');
+        if (e.type === 'formula.selection.frozen') phase('最佳候选已重跑核对');
+      }
       switch (e.type) {
         case "user.message":
           s.messages.push({
@@ -458,6 +467,7 @@ export function useResearch() {
       s.meta = null;
       s.artifacts = [];
       s.branches = [];
+      s.formulaStudies = [];
       s.selectedAgent = "main";
       s.activeAgent = "main";
       s.agentPhases = {};
@@ -479,6 +489,7 @@ export function useResearch() {
         if (own !== generation) return;
         s.meta = x;
         s.branches = x.branches || [];
+        s.formulaStudies = x.formula_studies || [];
         s.activeAgent = x.active_agent_id || "main";
         s.artifacts = x.artifacts;
         s.messages = x.history.map((m: Msg) => ({ ...m, legacy: true }));

@@ -24,7 +24,8 @@
 | 项目 | 当前实现 |
 |---|---|
 | 数据 | 通用ICP硅刻蚀降阶仿真；200通道、11步骤、每次356秒 |
-| 研究 | NOOA CodeActV2，通用Python与Polars；不限定研究算法 |
+| 研究 | NOOA CodeActV2，通用科学Python；不限定研究算法 |
+| 公式比较 | 任意原始序列算子、版本、固定lot验证与模型比较、最佳重跑及强制交接 |
 | 可靠性 | 前后置校验、LoopGuard、Predict审查、最多两次定向修订 |
 | 并行 | 主研究动态派生独立分支；默认两个分支活跃 |
 | 预算 | 每轮主/子研究、摘要、审查、正文共用原生AdmissionBroker及token账本 |
@@ -53,6 +54,7 @@ simulation
 
 agents
 algorithms
+formula-research
 evidence-review
 concurrency
 streaming
