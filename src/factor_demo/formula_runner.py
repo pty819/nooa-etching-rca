@@ -11,30 +11,6 @@ import numpy as np
 import polars as pl
 
 
-def extract():
-    spec = json.loads(Path("../input/job.json").read_text())
-    namespace = {}
-    exec(compile(Path("../input/formula.py").read_text(), "formula.py", "exec"), namespace)  # noqa: S102 - registered scientific source in isolated worker
-    records = []
-    for item in spec["runs"]:
-        value = namespace["extract"](
-            pl.read_parquet(Path("../input") / item["trace"]),
-            pl.read_parquet(Path("../input") / item["steps"]),
-            json.loads(json.dumps(spec["params"])),
-        )
-        if value is not None:
-            array = np.asarray(value)
-            if array.ndim != 0 or array.dtype.kind not in "iuf":
-                raise ValueError("extract must return one numeric scalar or None per run")
-            value = float(value)
-            if not np.isfinite(value):
-                raise ValueError("Nonfinite formula result; use None for an explicit missing value")
-        records.append({"run_id": item["id"], "value": value})
-    pl.DataFrame(records, schema={"run_id": pl.String, "value": pl.Float64}).write_parquet(
-        "features.parquet"
-    )
-
-
 def pipeline(name, seed, params):
     from sklearn.ensemble import (
         ExtraTreesClassifier,
@@ -63,13 +39,18 @@ def evaluate():
     import joblib
 
     spec = json.loads(Path("../input/job.json").read_text())
-    frame = pl.read_parquet("../input/matrix.parquet")
-    ids = frame["run_id"].to_list()
-    positions = {identity: i for i, identity in enumerate(ids)}
-    x = frame.select(spec["features"]).to_numpy()
-    y = frame["label"].to_numpy()
+    matrices = pl.read_parquet("../input/matrix.parquet")
     rows = []
     for fold in [*spec["folds"], {"id": "dev", "train": spec["train"], "valid": spec["dev"]}]:
+        frame = (
+            matrices.filter(pl.col("fold") == fold["id"])
+            if "fold" in matrices.columns
+            else matrices
+        )
+        ids = frame["run_id"].to_list()
+        positions = {identity: i for i, identity in enumerate(ids)}
+        x = frame.select(spec["features"]).to_numpy()
+        y = frame["label"].to_numpy()
         train = [positions[v] for v in fold["train"]]
         valid = [positions[v] for v in fold["valid"]]
         model = pipeline(spec["model"], spec["seed"], spec["params"])

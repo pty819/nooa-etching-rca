@@ -19,9 +19,10 @@ class EvidenceRef(BaseModel):
     statistic: Literal["value", "count", "mean", "median", "sum", "min", "max", "std"] = "value"
     value: float | int | str | bool | None
     unit: str
-    run_ids: list[str] = Field(default_factory=list)
+    run_ids: list[str] = Field(default_factory=list, description="Actual sample/run identities from the referenced dataset, NOT DatasetRefs or execution IDs. Leave empty for dataset-level counts.")
     recipe_id: str | None = None
     sha256: str | None = None
+    dataset_ref: str | None = Field(default=None, description="DatasetRef whose identities and scope this evidence uses; defaults to this report's dataset.")
 
 
 class Hypothesis(BaseModel):
@@ -43,6 +44,8 @@ class ResearchReply(BaseModel):
     next_experiments: list[str] = Field(default_factory=list)
     questions_for_expert: list[str] = Field(default_factory=list)
     formula_comparison: FormulaHandoff | None = None
+    dataset_ref: str | None = None
+    intent: Literal["visualization","exploration","comparison","report"] = "report"
 
 
 class ReviewIssue(BaseModel):

@@ -18,6 +18,7 @@ dependencies = [
   "scipy>=1.17,<2",
   "statsmodels>=0.15,<0.16",
   "aeon>=1.6,<2",
+  "cloudpickle>=3,<4",
 ]
 
 [project.scripts]

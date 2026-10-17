@@ -14,12 +14,9 @@ import importlib.metadata
 import json
 import os
 import platform
-import re
 import shutil
-import sqlite3
 import time
 import uuid
-from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import quote
 
@@ -68,8 +65,12 @@ def dump(path, value):
 def environment():
     return {
         "python": platform.python_version(),
-        **{n: importlib.metadata.version(n) for n in ["numpy", "polars", "scipy", "scikit-learn"]},
+        **{
+            n: importlib.metadata.version(n)
+            for n in ["numpy", "polars", "scipy", "scikit-learn", "joblib", "cloudpickle"]
+        },
         "runner_sha256": digest(Path(__file__).with_name("formula_runner.py")),
+        "feature_runner_sha256": digest(Path(__file__).with_name("feature_runner.py")),
     }
 
 
@@ -80,8 +81,49 @@ class FormulaLab:
         self.root = events.root if events else self.run
         self.owner = events.agent_id if events else "main"
         self.base = self.root / ".formula-lab"
+        from .study_store import StudyStore
+
+        self.store = StudyStore(self.base)
+        self.data_session = None
         # Turn-local, deliberately absent from the durable study registry/snapshot.
         self._active_studies = set()
+
+    def dataset_ref(self, study=None):
+        if study is not None:
+            return study["plan"].get("dataset_ref")
+        return self.data_session.current()["id"] if self.data_session else None
+
+    def input_path(self, study=None, dataset_ref=None):
+        identity = dataset_ref or self.dataset_ref(study)
+        if identity:
+            from .datasets import DatasetRegistry
+
+            if self.data_session:
+                self.data_session.authorize(identity)
+            return DatasetRegistry(self.root).path(identity)
+        return self.root / "input"
+
+    def data_schema(self, study=None, dataset_ref=None):
+        from .dataset_adapter import detect_schema
+
+        return (
+            detect_schema(self.input_path(study, dataset_ref))
+            if not (dataset_ref or self.dataset_ref(study))
+            else self._manifest_schema(dataset_ref or self.dataset_ref(study))
+        )
+
+    def _manifest_schema(self, identity):
+        from .dataset_models import DatasetSchema
+        from .datasets import DatasetRegistry
+
+        return DatasetSchema.model_validate(DatasetRegistry(self.root).get(identity)["schema"])
+
+    def runs(self, study=None, dataset_ref=None):
+        from .dataset_adapter import canonical_index
+
+        return canonical_index(
+            self.input_path(study, dataset_ref), self.data_schema(study, dataset_ref)
+        )
 
     def begin_turn(self):
         self._active_studies.clear()
@@ -94,54 +136,21 @@ class FormulaLab:
     def active(self):
         return [s for s in self.catalog() if s["id"] in self._active_studies]
 
-    @contextmanager
-    def transaction(self):
-        self.base.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.base / "registry.sqlite", timeout=30)
-        try:
-            db.execute(
-                "CREATE TABLE IF NOT EXISTS studies(id TEXT PRIMARY KEY, body TEXT NOT NULL)"
-            )
-            db.execute("BEGIN IMMEDIATE")
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+    def transaction(self, write=True):
+        return self.store.transaction(write)
 
     def get(self, identity, db=None):
-        if not re.fullmatch(r"study-[a-f0-9]{12}", identity):
-            raise ValueError("Invalid study id")
-        if db is None:
-            with self.transaction() as connection:
-                return self.get(identity, connection)
-        row = db.execute("SELECT body FROM studies WHERE id=?", (identity,)).fetchone()
-        if not row:
-            raise ValueError("Unknown formula study")
-        study = json.loads(row[0])
-        study.setdefault("replays", [])
-        return study
+        return self.store.get(identity, db)
 
     def save(self, db, study):
-        db.execute(
-            "INSERT OR REPLACE INTO studies VALUES(?,?)",
-            (study["id"], json.dumps(study, allow_nan=False)),
-        )
+        self.store.save(db, study)
 
     def emit(self, kind, study_id, **data):
         if self.events:
             self.events.emit("formula." + kind, study_id=study_id, **data)
 
     def catalog(self):
-        if not (self.base / "registry.sqlite").exists():
-            return []
-        with self.transaction() as db:
-            studies = [
-                json.loads(row[0]) for row in db.execute("SELECT body FROM studies ORDER BY id")
-            ]
-        return [self.public(s) for s in studies]
+        return [self.public(s) for s in self.store.list()]
 
     def public(self, study):
         study.setdefault("replays", [])
@@ -167,6 +176,9 @@ class FormulaLab:
         return [s for s in self.catalog() if self.owner in s["plan"]["participants"]]
 
     def context_summary(self):
+        recent = self.store.recent(5)
+        chosen = {s["id"]: s for s in recent}
+        chosen.update({i: self.get(i) for i in self._active_studies})
         return json.dumps(
             {
                 "formula_studies": [
@@ -174,48 +186,68 @@ class FormulaLab:
                         "id": s["id"],
                         "title": s["plan"]["title"],
                         "labels": s["plan"]["labels"],
-                        "versions": [f["ref"] for f in s["formulas"]],
+                        "versions": [f["ref"] for f in s["formulas"][-8:]],
                         "selection_id": s["selection_id"],
                         "required_this_turn": s["id"] in self._active_studies,
                         "incomplete_trials": [
-                            t["id"] for t in s["trials"] if t["status"] != "succeeded"
+                            t["id"] for t in s["trials"][-8:] if t["status"] != "succeeded"
                         ],
                     }
-                    for s in self.catalog()
+                    for s in chosen.values()
                 ],
                 "contract": "公式比较按本轮任务需要启用。普通画图、数据查看、解释旧结果、自由探索可直接run_code/read，不启用选优。需要比较或确认最佳公式时create_formula_study或begin_formula_comparison；登记/修改/执行比较也自动启用。本轮启用后交接必须含formula_comparison，未完成则incomplete+reason。历史研究不会自动要求本轮继续比较。",
             },
             ensure_ascii=False,
         )
 
-    def verify_input(self, study=None):
-        public = self.root / "input"
-        expected = json.loads((self.root / "session.json").read_text())["public_sha256"]
-        actual = {str(p.relative_to(public)): digest(p) for p in public.rglob("*") if p.is_file()}
-        if expected != actual:
-            raise ValueError(
-                "Public input fingerprint changed; restore data before comparing formulas"
-            )
-        fingerprint = hashlib.sha256(json.dumps(actual, sort_keys=True).encode()).hexdigest()
+    def verify_input(self, study=None, dataset_ref=None, require_environment=True):
+        identity = dataset_ref or self.dataset_ref(study)
+        if identity:
+            from .datasets import DatasetRegistry
+
+            registry = DatasetRegistry(self.root)
+            registry.path(identity, verify=True)
+            fingerprint = registry.get(identity)["content_sha256"]
+        else:
+            public = self.root / "input"
+            expected = json.loads((self.root / "session.json").read_text())["public_sha256"]
+            actual = {
+                str(p.relative_to(public)): digest(p) for p in public.rglob("*") if p.is_file()
+            }
+            if expected != actual:
+                raise ValueError(
+                    "Public input fingerprint changed; restore data before comparing formulas"
+                )
+            fingerprint = hashlib.sha256(json.dumps(actual, sort_keys=True).encode()).hexdigest()
         if study and (
             study["plan"]["input_sha256"] != fingerprint
-            or study["plan"]["environment"] != environment()
+            or (require_environment and study["plan"]["environment"] != environment())
         ):
             raise ValueError("Frozen data/software protocol changed; create a new study")
         return fingerprint
 
     def create(self, spec: FormulaPlan):
-        fingerprint = self.verify_input()
+        dataset_ref = spec.dataset_ref or self.dataset_ref()
+        if dataset_ref and self.data_session:
+            self.data_session.authorize(dataset_ref)
+        fingerprint = self.verify_input(dataset_ref=dataset_ref)
         if len(set(spec.labels)) != 2 or len(set(spec.models)) != len(spec.models):
             raise ValueError("Choose two different labels and unique models")
+        source_runs = self.runs(dataset_ref=dataset_ref)
+        if {"label", "batch_id", "split"} - set(source_runs.columns):
+            raise ValueError(
+                "Declare label, independent group and train/dev split roles before formal comparison"
+            )
         runs = (
-            pl.read_parquet(self.root / "input/runs.parquet")
+            self.runs(dataset_ref=dataset_ref)
             .filter(~pl.col("is_control") & pl.col("label").is_in(spec.labels))
             .sort("run_id")
         )
         if set(runs["label"]) != set(spec.labels) or set(runs["split"]) - {"train", "dev"}:
             raise ValueError("Need both labels in public train/dev only")
-        if runs["recipe_id"].n_unique() != 1 or runs["run_id"].n_unique() != runs.height:
+        if ("recipe_id" in runs.columns and runs["recipe_id"].n_unique() != 1) or runs[
+            "run_id"
+        ].n_unique() != runs.height:
             raise ValueError("Need unique runs from one fixed recipe")
         train, dev = (runs.filter(pl.col("split") == split) for split in ["train", "dev"])
         if set(train["batch_id"]) & set(dev["batch_id"]):
@@ -252,7 +284,9 @@ class FormulaLab:
                 **spec.model_dump(),
                 "input_sha256": fingerprint,
                 "environment": environment(),
-                "recipe_id": runs["recipe_id"][0],
+                "recipe_id": runs["recipe_id"][0] if "recipe_id" in runs.columns else None,
+                "dataset_ref": dataset_ref,
+                "extraction_protocol": "isolated-per-sample-and-fold-fit-v2",
                 "group": "batch_id",
                 "train": train["run_id"].to_list(),
                 "dev": dev["run_id"].to_list(),
@@ -282,17 +316,15 @@ class FormulaLab:
         self.verify_input(study)
         source = artifact_path(self.run, spec.source).read_text()
         tree = ast.parse(source)
-        if not any(isinstance(n, ast.FunctionDef) and n.name == "extract" for n in tree.body):
-            raise ValueError("Source must define extract(trace, steps, params)")
+        functions = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+        required = {"extract"} if spec.kind == "per_sample" else {"fit", "transform"}
+        if required - functions:
+            raise ValueError("Source must define " + ", ".join(sorted(required)))
         if len(set(spec.sensors)) != len(spec.sensors) or len(set(spec.steps)) != len(spec.steps):
             raise ValueError("Sensors and steps must be unique")
-        first = pl.read_parquet(self.root / "input/runs.parquet").row(0, named=True)
-        trace = pl.read_parquet(self.root / "input" / first["trace_path"], n_rows=0)
-        if set(spec.sensors) - (set(trace.columns) - {"time_s", "step_id", "run_id"}):
-            raise ValueError("Unknown sensor in raw trace")
-        steps = pl.read_parquet(self.root / "input/steps.parquet")
-        if set(spec.steps) - set(steps["step_id"]):
-            raise ValueError("Unknown step")
+        from .feature_execution import FeatureExecutor
+
+        FeatureExecutor(self).validate(study, spec.model_dump())
         json.dumps(spec.params, allow_nan=False)
         with self.transaction() as db:
             study = self.get(identity, db)
@@ -379,65 +411,10 @@ class FormulaLab:
         shutil.copyfile(Path(__file__).with_name("formula_runner.py"), job / "workspace/runner.py")
         return job
 
-    async def matrix(self, study, item):
-        """Only declared, label-free raw columns/steps enter the formula process."""
-        runs = pl.read_parquet(self.root / "input/runs.parquet")
-        ids = study["plan"]["train"] + study["plan"]["dev"]
-        runs = runs.filter(pl.col("run_id").is_in(ids)).sort("run_id")
-        steps = pl.read_parquet(self.root / "input/steps.parquet")
-        matrix = runs.select("run_id", "label", "batch_id", "split")
-        for ref in item["formulas"]:
-            spec = next(f for f in study["formulas"] if f["ref"] == ref)
-            canonical = self.base / study["id"] / "formulas" / ref
-            if (
-                digest(canonical / "source.py") != spec["sha256"]
-                or digest(canonical / "spec.json") != spec["spec_sha256"]
-            ):
-                raise ValueError("Canonical formula snapshot changed")
-            job = self.new_job(study["id"], "extract")
-            config = {"params": spec["params"], "runs": []}
-            tokens = {}
-            for row in runs.iter_rows(named=True):
-                token = uuid.uuid4().hex
-                tokens[token] = row["run_id"]
-                frame = pl.read_parquet(self.root / "input" / row["trace_path"]).filter(
-                    pl.col("step_id").is_in(spec["steps"])
-                )
-                frame.select("time_s", "step_id", *spec["sensors"]).write_parquet(
-                    job / "input" / f"{token}.parquet"
-                )
-                timing = steps.filter(
-                    (pl.col("run_id") == row["run_id"]) & pl.col("step_id").is_in(spec["steps"])
-                )
-                timing.select("step_id", "start_s", "end_s").write_parquet(
-                    job / "input" / f"{token}-steps.parquet"
-                )
-                config["runs"].append(
-                    {"id": token, "trace": f"{token}.parquet", "steps": f"{token}-steps.parquet"}
-                )
-            shutil.copyfile(canonical / "source.py", job / "input/formula.py")
-            dump(job / "input/job.json", config)
-            try:
-                await self.worker(job, "import runpy\nrunpy.run_path('runner.py')['extract']()")
-                features = pl.read_parquet(job / "workspace/features.parquet")
-                if (
-                    features.columns != ["run_id", "value"]
-                    or features.height != runs.height
-                    or set(features["run_id"]) != set(tokens)
-                ):
-                    raise ValueError("Extraction output does not cover the registered runs")
-                features = features.with_columns(pl.col("run_id").replace_strict(tokens)).rename(
-                    {"value": ref}
-                )
-                matrix = matrix.join(features, on="run_id", validate="1:1")
-                if matrix.filter(pl.col("split") == "train")[ref].drop_nulls().is_empty():
-                    raise ValueError("Formula has no observed training values")
-                if not np.isfinite(matrix[ref].drop_nulls().to_numpy()).all():
-                    raise ValueError("Formula produced nonfinite values")
-            finally:
-                # Keep code, journal and outputs, but do not accumulate copied traces.
-                shutil.rmtree(job / "input")
-        return matrix.sort("run_id")
+    async def matrix(self, study, item, replay=False):
+        from .feature_execution import FeatureExecutor
+
+        return await FeatureExecutor(self).compute(study, item, replay=replay)
 
     async def model_result(self, study, item, matrix, model):
         plan = study["plan"]
@@ -462,7 +439,7 @@ class FormulaLab:
 
     def score(self, study, predictions):
         plan = study["plan"]
-        runs = pl.read_parquet(self.root / "input/runs.parquet").select("run_id", "label")
+        runs = self.runs(study).select("run_id", "label")
         metric = {
             "balanced_accuracy": balanced_accuracy_score,
             "accuracy": accuracy_score,
@@ -558,7 +535,48 @@ class FormulaLab:
                     matrix.write_parquet(folder / "matrix.parquet")
                     for filename in ["predictions.parquet", "model.joblib", "model_details.json"]:
                         shutil.copyfile(job / "workspace" / filename, folder / filename)
-                    hashes = {p.name: digest(p) for p in folder.iterdir()}
+                    feature_manifest = []
+                    for ref in item["formulas"]:
+                        definition = next(f for f in study["formulas"] if f["ref"] == ref)
+                        feature_manifest.append(
+                            {
+                                k: definition[k]
+                                for k in [
+                                    "ref",
+                                    "kind",
+                                    "sha256",
+                                    "params",
+                                    "sensors",
+                                    "steps",
+                                    "expression",
+                                    "unit",
+                                ]
+                            }
+                        )
+                        if definition.get("kind", "per_sample") == "learned":
+                            target = folder / "operators" / ref
+                            target.mkdir(parents=True, exist_ok=True)
+                            shutil.copyfile(
+                                self.base / identity / "features" / ref / "dev.state.joblib",
+                                target / "state.joblib",
+                            )
+                            shutil.copyfile(
+                                self.base / identity / "formulas" / ref / "source.py",
+                                target / "source.py",
+                            )
+                    dump(
+                        folder / "feature_manifest.json",
+                        {
+                            "dataset_ref": study["plan"].get("dataset_ref"),
+                            "training_ids": study["plan"]["train"],
+                            "operators": feature_manifest,
+                        },
+                    )
+                    hashes = {
+                        str(p.relative_to(folder)): digest(p)
+                        for p in folder.rglob("*")
+                        if p.is_file()
+                    }
                     self.update_trial(
                         identity,
                         row["id"],
@@ -673,7 +691,7 @@ class FormulaLab:
         best = ranked[0]
         item = next(s for s in study["sets"] if s["id"] == best["set_id"])
         self.emit("replay.start", identity, trial_id=best["id"])
-        matrix = await self.matrix(study, item)
+        matrix = await self.matrix(study, item, replay=True)
         saved = pl.read_parquet(self.base / identity / "results" / best["id"] / "matrix.parquet")
         if matrix.columns != saved.columns or not matrix.equals(saved):
             raise ValueError("Best formula replay changed feature values; selection refused")
@@ -715,8 +733,12 @@ class FormulaLab:
         }
 
     def export(self, study):
-        with self.transaction() as db:
-            return self._export(self.get(study["id"], db))
+        import fcntl
+
+        self.base.mkdir(parents=True, exist_ok=True)
+        with (self.base / "export.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            return self._export(self.get(study["id"]))
 
     def _export(self, study):
         folder = self.root / "workspace/artifacts/formula-lab" / study["id"]
@@ -730,8 +752,21 @@ class FormulaLab:
             if not target.parent.resolve().is_relative_to(public_root):
                 raise ValueError("Formula export escaped public artifacts")
             target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_file() and digest(target) == hashlib.sha256(content).hexdigest():
+                return
             temporary = target.with_name(".publish-" + uuid.uuid4().hex)
             temporary.write_bytes(content)
+            temporary.replace(target)
+
+        def publish_file(name, source, sha):
+            target = folder / name
+            if not target.parent.resolve().is_relative_to(public_root):
+                raise ValueError("Formula export escaped public artifacts")
+            if target.is_file() and digest(target) == sha:
+                return
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_name(".publish-" + uuid.uuid4().hex)
+            shutil.copyfile(source, temporary)
             temporary.replace(target)
 
         publish("study.json", json.dumps(self.public(study), ensure_ascii=False, indent=2).encode())
@@ -745,15 +780,17 @@ class FormulaLab:
             ).write_csv()
             publish("ranking.csv", table.encode())
         for formula in study["formulas"]:
-            publish(
+            publish_file(
                 formula["ref"] + ".py",
-                (self.base / study["id"] / "formulas" / formula["ref"] / "source.py").read_bytes(),
+                self.base / study["id"] / "formulas" / formula["ref"] / "source.py",
+                formula["sha256"],
             )
         for row in ranking:
             for name in row["hashes"]:
-                publish(
+                publish_file(
                     row["id"] + "/" + name,
-                    (self.base / study["id"] / "results" / row["id"] / name).read_bytes(),
+                    self.base / study["id"] / "results" / row["id"] / name,
+                    row["hashes"][name],
                 )
         return folder
 
@@ -768,7 +805,7 @@ class FormulaLab:
         if bound and handoff.study_id not in self._active_studies:
             raise ValueError("Handoff must reference a formula comparison active this turn")
         study = self.get(handoff.study_id)
-        self.verify_input(study)
+        self.verify_input(study, require_environment=False)
         if handoff.status == "incomplete":
             self.export(study)
             if not handoff.reason.strip() or handoff.selection_id:
@@ -820,7 +857,9 @@ class FormulaLab:
         lines = [
             "### 公式比较 · 程序核验记录",
             "",
-            f"{plan['title']} · {', '.join(plan['labels'])} · 固定 recipe `{plan['recipe_id']}`",
+            f"{plan['title']} · {', '.join(plan['labels'])}"
+            + (f" · 固定 recipe `{plan['recipe_id']}`" if plan["recipe_id"] else ""),
+            f"数据版本：`{plan.get('dataset_ref') or 'legacy discovery input'}`。",
             "",
             f"主指标：`{plan['metric']}`；训练 {len(plan['train'])} 片，开发集 {len(plan['dev'])} 片；按 lot 分组 {plan['folds']} 折。输入摘要 `{plan['input_sha256'][:16]}`。",
             "",

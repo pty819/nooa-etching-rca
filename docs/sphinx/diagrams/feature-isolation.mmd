@@ -1,0 +1,15 @@
+flowchart TB
+    P["冻结DatasetRef与lot折<br/>源码、参数、声明输入"] --> K{"算子种类"}
+    K -- per_sample --> O["每进程一个样本<br/>无标签，无其他样本文件"]
+    K -- learned --> F["fit进程<br/>仅本fold训练样本与训练标签"]
+    F --> S["自包含已学状态<br/>只在隔离进程加载"]
+    S --> T["transform进程<br/>一个样本 + 状态<br/>无验证/dev标签"]
+    O --> M["对应fold的特征矩阵"]
+    T --> M
+    M --> C["可信Pipeline<br/>训练内填补/标准化/分类器"]
+    C --> V["验证预测 + 宿主评分"]
+    V --> R["最佳候选绕过缓存重跑<br/>特征、预测和分数一致"]
+    classDef isolated fill:#e9f2ed,stroke:#3c7858,color:#1f4430
+    classDef trusted fill:#eaf0fa,stroke:#4b6f9c,color:#273f5e
+    class O,F,S,T isolated
+    class P,M,C,V,R trusted

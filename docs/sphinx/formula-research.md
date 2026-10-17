@@ -2,7 +2,7 @@
 
 ## 已实现的业务闭环
 
-专家可以在同一会话多轮提出三四种提取办法，agent编写任意Python提取代码，登记版本，计算每片晶圆的特征，并用固定的Logistic和树模型比较单公式及组合。程序保存验证协议、代码、参数、逐片预测、模型及失败记录；全部必要比较完成后，重新计算最佳候选，核对特征和预测一致，再交付中文公式说明和排名。
+专家可以在同一会话多轮提出三四种提取办法，agent编写任意Python提取代码，登记版本，计算每片晶圆的特征，并用固定的Logistic和树模型比较单公式及组合。程序保存验证协议、代码、参数、逐片预测、模型及失败记录；全部必要比较完成后，从原始对象重新拟合/提取并计算最佳候选，核对特征和预测一致，再交付中文公式说明和排名。
 
 这一能力由`formula_lab.py`执行，不是要求模型自行写一张“最高准确度”表。自由`run_code`仍然存在；只有进入公式研究的比较受此契约约束。通用探索中的每一个内部计算单元并不自动变成受审计的公式试验，不能扩大这一实现的保证范围。
 
@@ -19,7 +19,7 @@
 
 ## 公式是原始序列上的程序
 
-每个`FormulaSpec`包含名称、文字表达式、物理解释、传感器、step、参数、单位和源码路径。源码提供`extract(trace, steps, params)`，返回该run一个数值或显式缺失`None`。算法可以使用任意已安装的科学Python库；没有把专家限制在均值、比值等少数算子中。标量列表可组成多列特征集，分别计算或联合建模。
+每个`FormulaSpec`包含名称、文字表达式、物理解释、传感器、step、参数、单位和源码路径。默认`kind=per_sample`的源码提供`extract(sample, steps, params)`，返回该对象一个数值或显式缺失`None`；时序sample是传感器表，普通表格是单行表，图片/文本是该对象的Path。学得的算子使用`kind=learned`及`fit(samples, steps, params, labels)`、`transform(state, sample, steps, params)`；宿主在每折训练部分独立拟合。完整协议见[特征隔离](feature-isolation.md)。算法可以使用任意已安装的科学Python库；没有把专家限制在均值、比值等少数算子中。标量列表可组成多列特征集，分别计算或联合建模。
 
 例如step 2从20%时间开始的两个传感器乘积均值：
 
@@ -47,7 +47,7 @@ def extract(trace, steps, params):
 
 这个公式不同于`mean(a) * mean(b)`。实际回归夹具令a、b在两类中均为零均值，但相关方向相反：均值乘积只能得0.5的balanced accuracy，乘积均值可以得1.0。窗口测试还验证20%以后得到±1.5，而不是整步的±2。这是特意构造的语义检查，**不是生产数据准确率**。
 
-公式提取进程只获得声明step中的`time_s`、`step_id`和传感器列，步骤表只含`step_id/start_s/end_s`，文件使用随机标识。它不获得label、outcome、lot、原始run名称或完整公开输入。受保护case目录在临时目录下也不可读取。研究agent在自由探索阶段仍可看公开标签，所以这不防止人为把已知标签硬编码进公式；任意Python与文字表达式也没有形式化等价证明，仍需专家核对和反例检查。
+每个per_sample提取进程只获得一个对象；时序对象只含声明step中的`time_s`、`step_id`和传感器列，步骤表只含`step_id/start_s/end_s`，文件使用随机标识。它不获得label、outcome、lot、原始run名称、其他样本或完整公开输入。learned的fit只获得该折训练对象及训练标签，transform仍逐对象隔离；验证/开发对象不进入fit。受保护case目录在临时目录下也不可读取。研究agent在自由探索阶段仍可看公开标签，所以这不防止人为把已知标签硬编码进公式；任意Python与文字表达式也没有形式化等价证明，仍需专家核对和反例检查。
 
 ## 固定比较口径
 
@@ -55,15 +55,15 @@ def extract(trace, steps, params):
 
 | 项目 | 程序实际约束 |
 |---|---|
-| 对比范围 | 两个不同label，目标腔非control，公开train/dev，单一recipe |
-| 数据版本 | session导出的全部公开文件SHA256，并在登记、评价、冻结和交接时复核 |
-| 独立单位 | `batch_id`作为lot；禁止train/dev共用lot |
+| 对比范围 | 两个不同label、非control、公开train/dev；刻蚀数据保持单一recipe，其他模态按声明schema |
+| 数据版本 | 固定DatasetRef及文件SHA256；切回主集不改变已建研究，登记、评价、冻结和交接复核 |
+| 独立单位 | schema的group列映射为独立组；刻蚀为batch_id/lot，禁止train/dev共组 |
 | 验证折 | 训练集StratifiedGroupKFold；持久保存每折run ID，训练/验证均须有两类 |
 | 主指标 | balanced accuracy默认；可在创建时改为accuracy或macro F1 |
 | 模型预算 | 每个单公式及登记组合均执行研究内相同模型套件、种子和参数 |
-| 预处理 | 每折训练集拟合中位数填补；Logistic额外在每折训练集拟合标准化 |
+| 预处理 | learned算子及中位数填补在每折训练集拟合；Logistic额外在每折训练集拟合标准化 |
 | 选优 | dev主指标降序、lot CV均值降序、CV标准差升序、公式数量升序、稳定试验ID |
-| 环境 | Python、NumPy、Polars、SciPy、scikit-learn版本及可信执行器源码哈希 |
+| 环境 | Python、NumPy、Polars、SciPy、scikit-learn、joblib、cloudpickle版本及可信执行器源码哈希 |
 
 固定模型包括LogisticRegression、RandomForestClassifier、ExtraTreesClassifier和HistGradientBoostingClassifier，默认前两种。当前登记流程使用宿主设定的固定参数，不提供任意自定义估计器或自动超参搜索；其他模型可以先在自由研究代码中探索，进入统一选优流程需扩展并验证执行器。
 
@@ -103,3 +103,5 @@ def extract(trace, steps, params):
 Vue测试检查等待与已重跑状态、版本、分数、失败和排除理由；完整系统原有回归继续执行。最新计数见[发布验证记录](quality.md)。
 
 本轮触发回归另外覆盖：历史未完成研究不阻塞新的原生CodeAct画图任务；只读不启用；显式继续后必须交接；新轮重置；普通任务预算耗尽不携带历史公式交接；未启用时显式选优声明仍会被校验。
+
+新增`test_learned_features.py`实际使用自定义状态类，验证训练折fit、开发分布变化不改变训练特征和最佳重算；`test_multimodal_features.py`分别对表格、图片、文本实际提取、评价和冻结。它们是确定性工程夹具，不是泛化效果证明。

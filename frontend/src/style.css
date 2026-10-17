@@ -1651,3 +1651,22 @@ h1 {
 .formula-study a { font-size: 12px; color: #487656; }
 
 .formula-champion { padding: 10px 12px; background: #e8efe5; border-radius: 6px; color: #345d40; line-height: 1.7; font-size: 12px; }
+
+.dataset-current {padding:14px;background:#e8efe5;border-radius:8px;}
+.dataset-current h3 {margin:8px 0;font-size:16px;}
+.dataset-current p {font-size:13px;}
+.dataset-panel code {font-size:10px;overflow-wrap:anywhere;}
+.dataset-panel small {display:block;font-size:11px;color:#718067;line-height:1.6;}
+.dataset-panel h4 {margin:22px 0 10px;font-size:13px;}
+.dataset-actions {display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;}
+.dataset-panel button {padding:6px 8px;background:#f7f9f1;border:1px solid #d7dfce;border-radius:5px;font-size:11px;color:#365a43;cursor:pointer;}
+.dataset-panel button:disabled {opacity:.45;cursor:default;}
+.dataset-node {padding:12px;border-left:2px solid #86a98b;margin:8px 0;background:#f4f7ef;}
+.dataset-node strong,.dataset-entry strong {font-size:12px;}
+.dataset-node p {font-size:11px;line-height:1.7;}
+.dataset-entry {display:flex;align-items:center;gap:7px;padding:12px 0;border-bottom:1px solid #e0e5da;}
+.dataset-entry>div {flex:1;min-width:0;overflow-wrap:anywhere;}
+.dataset-preview,.dataset-import {font-size:12px;line-height:1.7;margin:18px 0;}
+.dataset-preview pre {white-space:pre-wrap;overflow-wrap:anywhere;font-size:10px;max-height:280px;overflow:auto;}
+.dataset-import label {display:grid;gap:7px;margin:12px 0;}
+.dataset-import select,.dataset-import textarea {padding:8px;border:1px solid #d7dfce;border-radius:6px;background:#fbfcf7;font:inherit;color:inherit;width:100%;}

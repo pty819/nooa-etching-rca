@@ -83,3 +83,11 @@ workflow以push、pull_request和workflow_dispatch触发。构建job固定Ubuntu
 首次仓库需启用Pages的workflow发布源；后续直接推送main即可重新构建。站点在仓库子路径下，必须同时检查首页、章节、CSS与SVG的200状态，不能只看GitHub Actions绿色。部署操作和图源均可由仓库历史审查。
 
 更多CLI解析细节见[自动生成的CLI参考](_generated/cli.md)。
+
+## 动态数据与导出
+
+把已提供的本地文件/目录放在项目data目录，在新建会话中选择；CSV/Parquet可自动发现身份列，复杂模态应提供dataset.json及索引。新会话不会覆盖旧目录。界面“数据范围”可读schema、样本预览、划分源码与血缘，在空闲时切换/回退或登记已提供数据；运行中通过对话指导agent。见[动态数据协议及示例](dynamic-datasets.md)。
+
+当前选择保存在SQLite，重启可恢复；每次切换重建科学worker。不要编辑`.datasets/versions`或对象存储，校验会拒绝哈希不符的文件。公开公式副本按内容增量导出，复制期间不持有SQLite写事务；相同内容的冻结快照去重。科学worker输出有界，截断会明确标记，不应把日志末尾当成完整计算表。
+
+request_data只暴露未来统一拉数接口；未配置时返回unavailable，不会访问外部API或知识图谱。已冻结的旧研究仍绑定原DatasetRef，加入新条目后应创建新比较协议，不能混用分数。

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import shutil
 import time
 import uuid
 from pathlib import Path
@@ -203,11 +202,14 @@ async def research_turn(
                 else:
                     reply = await getattr(agent, mode)(message)
                 review = {"status": "discussion", "revision": 0, "review": None}
+            if agent._datasets and not reply.dataset_ref:
+                reply.dataset_ref = agent._datasets.current()["id"]
             payload = {
                 **reply.model_dump(),
                 "review_status": review["status"],
                 "mission": events.task_id,
                 "revision": review["revision"],
+                "delivery_status": "pending",
             }
             if mode == "research":
                 formula_result = agent._formula_lab.handoff(reply.formula_comparison)
@@ -242,7 +244,7 @@ async def research_turn(
                         tables.append(name)
                     if len(tables) == 2:
                         break
-                if writer:
+                if writer and reply.intent != "visualization":
                     try:
                         await writer.send(
                             f"round-{turn}-final",
@@ -253,17 +255,26 @@ async def research_turn(
                             images,
                             tables,
                         )
-                    except (BudgetExceeded, AdmissionCallCapError):
+                    except Exception as delivery_error:  # noqa: BLE001 - saved result is authoritative; cancellation is BaseException
+                        payload["delivery_status"] = "fallback"
+                        payload["delivery_error_type"] = type(delivery_error).__name__
                         replies.send(f"round-{turn}-final", final_text, images, tables)
                         events.emit(
-                            "budget.delivery_fallback",
-                            message="正文生成预算已耗尽，直接交付已保存的结构化报告",
+                            "budget.delivery_fallback"
+                            if isinstance(delivery_error, (BudgetExceeded, AdmissionCallCapError))
+                            else "reply.delivery_fallback",
+                            error_type=type(delivery_error).__name__,
+                            message="正文生成未完成，直接交付已保存并验证的结构化报告",
                         )
                 else:
                     replies.send(f"round-{turn}-final", final_text, images, tables)
                 freeze_round_artifacts(run, folder)
             elif not replies.committed:
                 replies.send(f"round-{turn}-result", render_reply(payload))
+            if payload["delivery_status"] == "pending":
+                payload["delivery_status"] = "delivered"
+            write_json(folder / "reply.json", payload)
+            write_json(run / "latest_reply.json", payload)
             with (run / "conversation.jsonl").open("a") as out:
                 out.write(
                     json.dumps(
@@ -328,6 +339,8 @@ async def research_turn(
 
 def render_reply(reply: dict, include_formula=True) -> str:
     lines = [reply["summary"], ""]
+    if reply.get("dataset_ref"):
+        lines += ["> 数据范围：`" + reply["dataset_ref"] + "`。", ""]
     for h in reply["hypotheses"]:
         lines += [
             f"### {h['id']} · {h['title']} ({h['status']})",
@@ -354,11 +367,9 @@ def freeze_round_artifacts(run: Path, folder: Path) -> dict:
     """Keep evidence for earlier claims even when the scientist revises a script."""
     snapshot = folder / "artifacts"
     if not snapshot.exists():
-        shutil.copytree(
-            run / "workspace/artifacts",
-            snapshot,
-            ignore=__import__("factor_demo.evidence", fromlist=["snapshot_ignore"]).snapshot_ignore,
-        )
+        from .artifact_store import snapshot_tree
+
+        snapshot_tree(run / "workspace/artifacts", snapshot, run / ".artifact-store")
     hashes = {
         str(p.relative_to(snapshot)): hashlib.sha256(p.read_bytes()).hexdigest()
         for p in sorted(snapshot.rglob("*"))

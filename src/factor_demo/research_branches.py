@@ -139,7 +139,7 @@ class BranchStore:
                 )
 
 
-def prepare_branch(root, identity, parent, task, title, evidence_paths):
+def prepare_branch(root, identity, parent, task, title, evidence_paths, dataset_ref=None):
     run = root / "branches" / identity
     run.mkdir(parents=True)
     (run / "input").symlink_to((root / "input").resolve(), target_is_directory=True)
@@ -148,8 +148,18 @@ def prepare_branch(root, identity, parent, task, title, evidence_paths):
     write_json(run / "session.json", config)
     write_json(
         run / "branch.json",
-        {"agent_id": identity, "parent_agent_id": parent, "title": title, "task": task},
+        {
+            "agent_id": identity,
+            "parent_agent_id": parent,
+            "title": title,
+            "task": task,
+            "dataset_ref": dataset_ref,
+        },
     )
+    if dataset_ref:
+        from .datasets import DatasetRegistry
+
+        DatasetRegistry(root).bind(identity, dataset_ref)
     seeds = []
     for index, name in enumerate(evidence_paths):
         source = public_artifact_path(root, name)
@@ -231,7 +241,7 @@ class ResearchManager:
                 "This mission permits root-directed research branches only; request further decomposition from the parent"
             )
 
-    async def spawn(self, task, title="", evidence_paths=None):
+    async def spawn(self, task, title="", evidence_paths=None, dataset_ref=None):
         self._can_spawn()
         if not task.strip() or len(task) > 30000:
             raise ValueError("Provide a focused research question (1-30000 characters)")
@@ -244,13 +254,21 @@ class ResearchManager:
         for name in evidence_paths or []:
             public_artifact_path(self.root, name)
         identity = "research-" + uuid.uuid4().hex[:10]
+        datasets = getattr(self.agent, "_datasets", None)
+        dataset_ref = dataset_ref or (datasets.current()["id"] if datasets else None)
         title = (title or task[:60])[:80]
         _run, seeds = prepare_branch(
-            self.root, identity, self.identity, task, title, evidence_paths or []
+            self.root, identity, self.identity, task, title, evidence_paths or [], dataset_ref
         )
         self.store.create(identity, self.identity, self.mission, title, task)
         self.events.emit("branch.created", branch=self.store.get(identity))
         message = task + "\n\n这是独立研究分支。返回可复核EvidenceRef，保留反证，不假设读过父会话。"
+        if dataset_ref:
+            message += (
+                "\n绑定DatasetRef="
+                + dataset_ref
+                + "。使用worker内DATASET路径；保持你的独立数据范围。"
+            )
         if seeds:
             message += "\n父任务提供的待复核材料（不是隐藏真值）：" + json.dumps(
                 seeds, ensure_ascii=False

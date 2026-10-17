@@ -4,6 +4,7 @@ Tool arguments never enter the browser event stream. Reply text comes from a
 separate tool-free generation selected by a task-local context variable.
 """
 
+import asyncio
 import codecs
 import json
 import time
@@ -25,6 +26,9 @@ class WireObserver:
         self.text = ""
         self.decoder = codecs.getincrementaldecoder("utf-8")()
         self.pending = ""
+        self.buffers = {}
+        self.sent = set()
+        self.flush_timer = None
         self.events.emit(
             "model.start", call_id=self.call_id, purpose="reply" if message_id else "research"
         )
@@ -47,23 +51,51 @@ class WireObserver:
         else:
             self.events.emit("model.content.delta", call_id=self.call_id, text=text)
 
+    def enqueue(self, kind, text):
+        if not isinstance(text, str) or not text:
+            return
+        if kind not in self.sent:
+            self.sent.add(kind)
+            self.emit_text(kind, text)
+            return
+        self.buffers[kind] = self.buffers.get(kind, "") + text
+        if len(self.buffers[kind]) >= 4096:
+            self.flush()
+        elif self.flush_timer is None:
+            try:
+                self.flush_timer = asyncio.get_running_loop().call_later(0.025, self.flush)
+            except RuntimeError:
+                self.flush()
+
+    def emit_text(self, kind, text):
+        if kind == "content":
+            self.content(text)
+        else:
+            self.events.emit("model.reasoning.delta", call_id=self.call_id, text=text)
+
+    def flush(self):
+        if self.flush_timer:
+            self.flush_timer.cancel()
+            self.flush_timer = None
+        buffers, self.buffers = self.buffers, {}
+        for kind, text in buffers.items():
+            self.emit_text(kind, text)
+
     def data(self, value: dict):
         for choice in value.get("choices", []):
             delta = choice.get("delta", {})
             thought = delta.get("reasoning_content") or delta.get("reasoning")
             if isinstance(thought, str) and thought:
-                self.events.emit("model.reasoning.delta", call_id=self.call_id, text=thought)
-            self.content(delta.get("content"))
+                self.enqueue("reasoning", thought)
+            self.enqueue("content", delta.get("content"))
             # NOOA/SDK collects delta.tool_calls, validates full args, then executes.
             # We deliberately do not parse, preview or expose those argument bytes.
         if value.get("type") == "content_block_delta":
             delta = value.get("delta", {})
             if delta.get("type") == "thinking_delta":
-                self.events.emit(
-                    "model.reasoning.delta", call_id=self.call_id, text=delta.get("thinking", "")
-                )
+                self.enqueue("reasoning", delta.get("thinking", ""))
             elif delta.get("type") == "text_delta":
-                self.content(delta.get("text"))
+                self.enqueue("content", delta.get("text"))
 
     def feed(self, chunk: bytes):
         self.pending = (self.pending + self.decoder.decode(chunk)).replace("\r\n", "\n")
@@ -91,9 +123,11 @@ class ObservedStream(httpx.AsyncByteStream):
                 self.observer.feed(chunk)
                 yield chunk
         finally:
+            self.observer.flush()
             self.observer.events.emit("model.stream.end", call_id=self.observer.call_id)
 
     async def aclose(self):
+        self.observer.flush()
         await self.original.aclose()
 
 
@@ -179,6 +213,13 @@ def observe_agent(agent, events: LiveEvents):
             "resume_research",
             "inspect_candidate",
             "create_formula_study",
+            "inspect_dataset",
+            "list_datasets",
+            "read_dataset_lineage",
+            "derive_dataset",
+            "select_dataset",
+            "return_dataset",
+            "request_data",
             "begin_formula_comparison",
             "register_formula",
             "evaluate_formula_set",

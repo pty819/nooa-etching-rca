@@ -14,6 +14,7 @@ export type Session = {
   task_id: string | null;
   targets: number;
   controls: number;
+  kind?: string;
   updated: number;
 };
 export type Msg = {
@@ -67,13 +68,68 @@ export interface FormulaStudy {
   selection_id: string | null;
   limits: string;
   plan: {
-    title: string; labels: string[]; metric: string; folds: number;
-    input_sha256: string; train: string[]; dev: string[];
+    title: string;
+    labels: string[];
+    metric: string;
+    folds: number;
+    input_sha256: string;
+    train: string[];
+    dev: string[];
     model_params: Record<string, Record<string, unknown>>;
   };
-  formulas: {ref: string; expression: string; description: string; change_reason?: string; sensors: string[]; steps: number[]; unit: string; params: Record<string, unknown>; sha256: string}[];
-  sets: {id: string; formulas: string[]; excluded: null | {reason: string}}[];
-  trials: {id: string; set_id: string; formulas: string[]; model: string; status: string; dev_score?: number; cv_mean?: number; cv_std?: number; error?: string}[];
-  replays?: {id: string; status: string; error?: string}[];
-  selections: {id: string; winner: string; ranking: string[]; replay: {status: string}}[];
+  formulas: {
+    ref: string;
+    expression: string;
+    description: string;
+    change_reason?: string;
+    sensors: string[];
+    steps: number[];
+    unit: string;
+    params: Record<string, unknown>;
+    sha256: string;
+  }[];
+  sets: {
+    id: string;
+    formulas: string[];
+    excluded: null | { reason: string };
+  }[];
+  trials: {
+    id: string;
+    set_id: string;
+    formulas: string[];
+    model: string;
+    status: string;
+    dev_score?: number;
+    cv_mean?: number;
+    cv_std?: number;
+    error?: string;
+  }[];
+  replays?: { id: string; status: string; error?: string }[];
+  selections: {
+    id: string;
+    winner: string;
+    ranking: string[];
+    replay: { status: string };
+  }[];
+}
+
+export interface DatasetItem {
+  id: string;
+  title: string;
+  rows: number;
+  parents: string[];
+  version: number;
+  family: string;
+  relation: string;
+  modality: string;
+  reason: string;
+}
+export interface DatasetState {
+  datasets: DatasetItem[];
+  total: number;
+  next_offset?: number;
+  current: DatasetItem;
+  scope: { root: string; current: string; stack: string[] };
+  lineage: { nodes: DatasetItem[]; edges: { parent: string; child: string }[] };
+  acquisition: { status: string; message: string };
 }

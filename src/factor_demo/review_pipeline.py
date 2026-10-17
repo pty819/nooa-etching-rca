@@ -1,11 +1,11 @@
 """Evidence checks, native Predict review and bounded targeted revisions."""
 
 import json
-import shutil
 from pathlib import Path
 
 from nooa.unifiedllm.admission import AdmissionCallCapError
 
+from .artifact_store import snapshot_file, snapshot_tree
 from .budget import BudgetExceeded
 from .evidence import EvidenceVerifier
 from .live_events import public_artifact_path
@@ -16,11 +16,7 @@ from .synthetic import write_json
 def freeze_revision(run: Path, folder: Path, report: ResearchReply, verification: dict):
     folder.mkdir(parents=True, exist_ok=False)
     if (run / "workspace/artifacts").exists():
-        shutil.copytree(
-            run / "workspace/artifacts",
-            folder / "artifacts",
-            ignore=__import__("factor_demo.evidence", fromlist=["snapshot_ignore"]).snapshot_ignore,
-        )
+        snapshot_tree(run / "workspace/artifacts", folder / "artifacts", run / ".artifact-store")
     cited = (
         set(report.artifacts)
         | {p for h in report.hypotheses for p in h.evidence_files}
@@ -31,7 +27,7 @@ def freeze_revision(run: Path, folder: Path, report: ResearchReply, verification
         # Only already-validated relative artifact names enter this immutable snapshot.
         target = folder / "cited" / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        snapshot_file(source, target, run / ".artifact-store")
     write_json(folder / "report.json", report.model_dump())
     write_json(folder / "verification.json", verification)
 
@@ -50,7 +46,7 @@ def review_bundle(report, verification, events=None):
         "report": report.model_dump(),
         "saved_table_verification": verification,
         "host_observed_reflection_events_latest_first": observed,
-        "rubric": "检查证据一致性、闭环非独立、设定值/瞬态、lot伪重复、监督选择泄漏、OPLS数学一致性、小样本置换、恢复比例和因果越界。只给有依据的问题，不重复探索。",
+        "rubric": "先识别本轮任务及报告实际声明，仅检查适用项目。通用项：证据一致性、数据范围、独立样本粒度、监督选择泄漏、因果越界。仅对涉及的刻蚀/统计声明检查闭环非独立、设定值/瞬态、lot伪重复、OPLS数学一致性、置换和恢复比例。数据划分或计数验收不要求根因推断、建模或OPLS。只给有依据的问题，不重复探索，不强制补与用户任务无关的实验。",
         "scope": "只有这里提供的已保存证据被复核；没有重算的事项不能假装重算。",
         "allowed_claim_ids": [
             "summary",
@@ -150,6 +146,22 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
             verified["formula_comparison"] = agent._formula_lab.handoff(report.formula_comparison)
         revision = folder / "revisions" / f"attempt_{attempt:02d}"
         freeze_revision(run, revision, report, verified)
+        if (
+            report.intent == "visualization"
+            and not report.hypotheses
+            and not report.formula_comparison
+            and not (getattr(agent, "_formula_lab", None) and agent._formula_lab.active())
+        ):
+            outcome = {
+                "status": "not_required",
+                "revision": attempt,
+                "verification": verified,
+                "review": None,
+                "reason": "visualization_only",
+            }
+            write_json(revision / "outcome.json", outcome)
+            events.emit("review.end", **outcome)
+            return report, outcome
         if not policy.review_enabled:
             outcome = {
                 "status": "not_reviewed",
@@ -208,13 +220,14 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
             if not blockers
             else "needs_revision"
             if attempt < policy.max_revisions
-            else "budget_exhausted"
+            else "revision_limit"
         )
         outcome = {
             "status": status,
             "revision": attempt,
             "verification": verified,
             "review": last_review.model_dump(),
+            "reason": "revision_limit" if status == "revision_limit" else None,
         }
         write_json(revision / "outcome.json", outcome)
         events.emit(
@@ -240,6 +253,22 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
                 raise
             outcome["status"] = "budget_exhausted"
             outcome["reason"] = "shared_model_budget"
+            lab = getattr(agent, "_formula_lab", None)
+            active = lab.active() if lab else []
+            if active:
+                from .formula_models import FormulaHandoff
+
+                report = report.model_copy(
+                    update={
+                        "summary": "定向修订未完成，以下保留上一个检查点，不能当作新的选优结论。\n"
+                        + report.summary,
+                        "formula_comparison": FormulaHandoff(
+                            study_id=active[-1]["id"],
+                            status="incomplete",
+                            reason="Revision model budget exhausted; active comparisons are unfinished",
+                        ),
+                    }
+                )
             write_json(revision / "outcome.json", outcome)
             events.emit("review.end", status="budget_exhausted", revision=attempt)
             return report, outcome

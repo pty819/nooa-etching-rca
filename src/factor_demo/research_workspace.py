@@ -19,6 +19,15 @@ from .synthetic import write_json
 
 def prepare_workspace(data: Path, run: Path) -> dict:
     data, run = data.resolve(), run.resolve()
+    if (
+        data.is_file()
+        or not (data / "runs.parquet").is_file()
+        or not (data / "features.parquet").is_file()
+    ):
+        from .datasets import prepare_generic_workspace
+
+        prepare_generic_workspace(data, run)
+        return json.loads((run / "session.json").read_text())
     if run.exists() and any(run.iterdir()):
         raise ValueError("Choose a new run or use autoresearch-chat")
     public, work = run / "input", run / "workspace"
@@ -30,7 +39,15 @@ def prepare_workspace(data: Path, run: Path) -> dict:
         frame = meta if name == "runs" else pl.read_parquet(data / f"{name}.parquet")
         frame.filter(pl.col("run_id").is_in(ids)).write_parquet(public / f"{name}.parquet")
     for source, target in [("features", "features"), ("control_features", "control_features")]:
-        frame = pl.read_parquet(data / f"{source}.parquet")
+        source_path = data / f"{source}.parquet"
+        if (
+            source == "control_features"
+            and not source_path.exists()
+            and not meta["is_control"].any()
+        ):
+            frame = pl.read_parquet(data / "features.parquet").head(0)
+        else:
+            frame = pl.read_parquet(source_path)
         frame.filter(pl.col("run_id").is_in(ids)).write_parquet(public / f"{target}.parquet")
     for name in ["sensors.json", "catalog.json", "recipe.json", "case.json"]:
         shutil.copyfile(data / name, public / name)
@@ -81,9 +98,24 @@ class PythonWorkspace:
         self.pumps = []
         self.external_output = []
         self.active_cell = 0
+        self.dataset_session = None
+        self.dataset_id = None
+        self.data_root = self.run / "input"
+        self.external_chars = 0
+        self.output_events = 0
 
     def emit(self, kind, **data):
         if self.events is not None:
+            if kind == "tool.output":
+                self.output_events += 1
+                if self.output_events > 2000:
+                    if self.output_events == 2001:
+                        self.events.emit(
+                            "tool.output.truncated",
+                            cell=self.active_cell,
+                            message="Live output event limit reached; bounded output is retained in the cell record",
+                        )
+                    return
             self.events.emit(kind, **data)
 
     async def pump(self, reader, source):
@@ -92,6 +124,15 @@ class PythonWorkspace:
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         while chunk := await reader.read(4096):
             value = decoder.decode(chunk)
+            self.external_chars += len(value)
+            if self.external_chars > 262144:
+                if self.external_chars - len(value) <= 262144:
+                    value = (
+                        value[: max(0, 262144 - (self.external_chars - len(value)))]
+                        + "\n[Subprocess output truncated; save large data to artifacts.]\n"
+                    )
+                else:
+                    continue
             self.external_output.append(value)
             self.emit("tool.output", cell=self.active_cell, text=value, source=source)
 
@@ -111,9 +152,14 @@ class PythonWorkspace:
             "/dev",
             sys.base_prefix,
             sys.prefix,
-            str(self.run / "input"),
+            str(self.data_root),
             str(self.work),
         ]
+        if (
+            self.dataset_session is None
+            or self.dataset_id == self.dataset_session.registry.bootstrap()["id"]
+        ):
+            read_paths.append(str(self.run / "input"))
         excludes = " ".join(
             f"(require-not (subpath {json.dumps(str(Path(p).resolve()))}))" for p in read_paths
         )
@@ -144,6 +190,8 @@ class PythonWorkspace:
             "OPENBLAS_NUM_THREADS": "2",
             "OMP_NUM_THREADS": "2",
             "VECLIB_MAXIMUM_THREADS": "2",
+            "RESEARCH_DATASET": str(self.data_root),
+            "RESEARCH_DATASET_ID": self.dataset_id or "",
         }
         shutil.copyfile(Path(__file__).with_name("research_worker.py"), self.work / "_worker.py")
         sandbox_profile = self.profile()
@@ -196,11 +244,19 @@ class PythonWorkspace:
         if not self.research_enabled:
             raise PermissionError("Research code execution is disabled in discussion mode")
         async with self.lock:
+            if self.dataset_session is not None:
+                current = self.dataset_session.current()
+                if self.dataset_id != current["id"]:
+                    await self.close()
+                    self.dataset_id = current["id"]
+                    self.data_root = self.dataset_session.path(self.dataset_id)
             if self.process is None or self.process.returncode is not None:
                 await self.start()
             self.count += 1
             self.active_cell = self.count
             self.external_output = []
+            self.external_chars = 0
+            self.output_events = 0
             cells = self.work / "research_cells"
             cells.mkdir(exist_ok=True)
             filename = cells / f"cell_{self.count:04d}.py"
@@ -208,7 +264,11 @@ class PythonWorkspace:
             request = {"code": code, "filename": str(filename.relative_to(self.work))}
             started = time.time()
             self.emit(
-                "tool.start", cell=self.count, code=code, timeout_s=min(300, max(1, timeout_s))
+                "tool.start",
+                cell=self.count,
+                code=code,
+                timeout_s=min(300, max(1, timeout_s)),
+                dataset_ref=self.dataset_id,
             )
             captured = []
             cancelled = False
@@ -262,6 +322,7 @@ class PythonWorkspace:
                 "code": code,
                 "started": started,
                 "elapsed_s": time.time() - started,
+                "dataset_ref": self.dataset_id,
                 **result,
             }
             with (self.run / "execution.jsonl").open("a") as out:
@@ -273,6 +334,7 @@ class PythonWorkspace:
                 ok=result["ok"],
                 elapsed_s=record["elapsed_s"],
                 output=result["output"][-24000:],
+                dataset_ref=self.dataset_id,
             )
             print(
                 f"Code cell {self.count}: {'OK' if result['ok'] else 'ERROR'} ({record['elapsed_s']:.1f}s)",
@@ -283,9 +345,12 @@ class PythonWorkspace:
             return {
                 **result,
                 "cell": self.count,
+                "dataset_ref": self.dataset_id,
                 "output": result["output"][:24000],
                 "full_output": str(filename.with_suffix(".output.json").relative_to(self.work)),
-                "output_truncated": len(result["output"]) > 24000,
+                "output_truncated": result.get("output_truncated", False)
+                or len(result["output"]) > 24000
+                or self.external_chars > 262144,
             }
 
     async def close(self):

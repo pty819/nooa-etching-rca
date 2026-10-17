@@ -1,0 +1,19 @@
+flowchart TB
+    U["用户本轮问题<br/>对象、模态、范围与交付"] --> A["CodeActV2<br/>现场生成任意Python"]
+    L["已提供的本地数据<br/>表格、曲线、图片、文本、组合资产"] --> D["DatasetAdapter<br/>身份、schema、单位、split、资产"]
+    D --> V["DatasetRegistry<br/>不可变DatasetRef + 内容寻址对象"]
+    V --> S["每agent独立作用域<br/>current / parent stack / bound root"]
+    S --> W["隔离科学worker<br/>DATASET / DATASET_ID<br/>当前版本只读"]
+    A --> W
+    W --> T["派生目录 + 源码 + 参数 + 理由"]
+    T --> V
+    S --> F["公式计划冻结同一引用<br/>样本 / lot折 / 模型协议"]
+    S --> E["证据与报告标记引用<br/>跨范围引用必须明确"]
+    S --> B["子研究绑定引用<br/>独立范围与恢复"]
+    R["未来统一取数边界<br/>默认unavailable，无KG连接"] -. "将来供应新条目" .-> D
+    classDef data fill:#e8f2ed,stroke:#3d7757,color:#234730
+    classDef host fill:#eaf0f9,stroke:#4c6f98,color:#263f5d
+    classDef future fill:#fff3df,stroke:#ac8041,color:#765324
+    class L,D,V,T data
+    class S,W,F,E,B host
+    class R future

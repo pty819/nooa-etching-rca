@@ -33,20 +33,26 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 
 ## 一轮任务的数据与控制流
 
-入口先核对会话，建立本轮共享预算、公开工具和独立工作区；恢复NOOA快照后重新安装运行态对象、技能与上下文。模型生成的外层 `python_cell` 调用应用公开方法。真正的数据计算进入 `run_code` 或 `write_file` + `run_script`，在那里使用 `../input` 与 `artifacts/`。
+入口先核对会话，建立本轮共享预算、公开工具和独立工作区；恢复NOOA快照后重新安装运行态对象、技能与上下文。模型生成的外层 `python_cell` 调用应用公开方法。真正的数据计算进入 `run_code` 或 `write_file` + `run_script`，在那里使用只读`DATASET`、`DATASET_ID`与`artifacts/`；切换数据范围会重建worker，旧变量不再复用。
 
-候选返回后，应用先核验并冻结证据，再调用原生Predict审查。需要时进入 `revise`，保留每次旧结果。最终结构化答复、审查结果和Markdown先保存，之后经独立正文生成流交付。正文生成若因模型预算被拒绝，应用直接发送已保存报告，不虚构逐token进展。
+候选返回后，应用先核验并冻结证据，再调用原生Predict审查。需要时进入 `revise`，保留每次旧结果。最终结构化答复、审查结果和Markdown先保存，之后经独立正文生成流交付。纯可视化通过文件/数值检查后直接交付，不调用科学审查或第二次正文生成。正文生成若因预算、超时或其他可恢复错误失败，应用直接发送已保存报告，不虚构逐token进展。
 
 ## 两个不同的代码环境
 
-外层NOOA执行环境负责调用公开工具与调度；它的cwd不等于研究workspace。在外层直接 `open('artifacts/...')` 或 `savefig` 可能写到错误位置。科学worker是持久Python进程，cwd才是本方向workspace，可读取同一公开输入，且不继承API凭据。
+外层NOOA执行环境负责调用公开工具与调度；它的cwd不等于研究workspace。在外层直接 `open('artifacts/...')` 或 `savefig` 可能写到错误位置。科学worker是持久Python进程，cwd才是本方向workspace，可读取本方向选中的不可变数据版本，且不继承API凭据。
 
 `run_code`调用之间可复用该worker中的变量；退出、超时或恢复会重建worker，内存数组不会自动恢复。`run_script`启动脚本子进程，不能假定它与交互解释器共享Python变量。恢复依赖脚本、文件和NOOA事件，而不是隐式内存快照。
 
 ## 状态为什么分开保存
 
-`conversation.sqlite`保存NOOA事件和快照；根 `ui.sqlite`保存浏览器可重放事件、inbox与请求ID；`branches.sqlite`保存任务注册与生命周期；`budget.sqlite`保存本轮token预留和结算。它们是不同职责的持久层，不是一个跨数据库原子事务。
+`conversation.sqlite`保存NOOA事件和快照；根 `ui.sqlite`保存浏览器可重放事件、inbox与请求ID；`branches.sqlite`保存任务注册与生命周期；`budget.sqlite`保存本轮token预留和结算；`.datasets/registry.sqlite`保存不可变数据定义和方向独立的选择栈；`.formula-lab/registry.sqlite`保存公式版本及试验。它们是不同职责的持久层，不是一个跨数据库原子事务。
 
 因此系统承诺可恢复文件与可追溯状态，**不承诺强杀时所有副作用exactly-once**。进程身份核对、mission匹配、旧报告过滤和显式恢复用于降低误关联风险；运行日志仍需保留来解释崩溃边界。
 
 完整符号与实际公开方法见[源码索引](_generated/modules.md)。
+
+## 数据范围与科学协议
+
+[动态数据集](dynamic-datasets.md)把现场生成的划分代码、父版本、schema、理由和输出哈希绑定为DatasetRef。主/子方向各自选择范围；分支只能使用派生时分配的根及后代。公式计划和数值证据显式绑定版本，避免返回主集后错用旧统计。文件对象和修订快照采用内容寻址，工作区改写不影响已冻结文件。
+
+[特征隔离](feature-isolation.md)区分逐对象算子与学得的变换，fold训练与开发数据走独立入口。外部拉数仅保留类型化可注入接口，未配置时明确不可用；本次没有连接知识图谱或实际外部数据源。

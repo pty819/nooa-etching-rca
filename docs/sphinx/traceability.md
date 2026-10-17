@@ -19,6 +19,9 @@
 | R13 | docs/sphinx、docs.yml、check_docs.py | 严格构建与站点检查 | 公开文档与源仓；不是线上研究服务 |
 | R14 | formula_models.py、formula_lab.py、formula_runner.py、FormulaStudies.vue | test_formula_lab.py、formulas.test.ts | 任意Python标量特征、四类固定模型与强制交接；不是任意模型、因果证明或独立最终测试 |
 
+| R15 | datasets.py、dataset_adapter.py、dataset_api.py、DatasetPanel.vue | test_datasets.py、datasets.test.ts | 版本/血缘/嵌套/恢复/分支与本地导入；实际外部拉数和KG未接入 |
+| R16 | feature_execution.py、feature_runner.py、artifact_store.py、review_pipeline.py | test_learned_features.py、test_multimodal_features.py、test_audit_regressions.py | 逐对象/折内隔离与可恢复交付；任意代码语义与因果仍需核验 |
+
 ## 八项NOOA能力的具体组合
 
 | 原生能力 | 应用补齐部分 | 公开实现文件 |

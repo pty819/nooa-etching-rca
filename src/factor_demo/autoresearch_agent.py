@@ -6,6 +6,7 @@ from typing import Annotated
 
 from nooa import Agent, hidden, strategy
 
+from .dataset_models import AcquisitionRequest, DatasetDerivation, DatasetSchema  # noqa: F401 - CodeAct types
 from .formula_models import FormulaHandoff, FormulaPlan, FormulaSpec  # noqa: F401 - CodeAct types
 from .research_models import (
     CandidateAssessment,
@@ -27,6 +28,7 @@ with hidden:
     from nooa.strategies import CodeActV2, PredictStrategy
 
     from .capabilities import Capabilities
+    from .datasets import DatasetSession
     from .evidence import research_postcondition, research_precondition
     from .formula_lab import FormulaLab
     from .live_events import MarkdownReplies, artifact_index
@@ -38,14 +40,14 @@ with hidden:
 
 
 class AutoresearchAgent(Agent):
-    """与设备专家协作的自主刻蚀研究员。自己选择算法、写Python并依据证据反驳和修订假设。
+    """与设备专家协作的自主刻蚀研究员。根据用户本轮问题选择算法、写Python并依据证据反驳和修订假设。
 
-    专家擅长排除有数学证据的错误方向，不负责替你设计所有实验。重要原则见physics/statistics技能。
-    外层python_cell调用公开方法；所有研究代码在隔离worker运行。Polars仅为表格处理首选，不是算法限制。
+    专家擅长排除有数学证据的错误方向，不负责替你设计所有实验。重要原则见实际激活的领域/统计技能。
+    外层python_cell调用公开方法；所有研究代码在隔离worker运行。先inspect_dataset确认当前范围；子集/父集切换用数据工具。Polars仅为表格处理首选，不是算法限制。
     可自由组合NumPy、SciPy、scikit-learn、aeon、statsmodels、pandas、matplotlib及其他已安装库。
     根据问题选择成熟实现，不因强调Polars就手写替代成熟统计/时序算法。不得访问隐藏真值。
     外层python_cell的cwd/文件系统不属于研究工作目录，不在外层open/read_parquet/savefig。
-    把完整源代码交给run_code或write_file+run_script；worker的cwd就是workspace，input在../input。
+    把完整源代码交给run_code或write_file+run_script；worker的cwd就是workspace；当前只读数据在worker变量DATASET，引用为DATASET_ID。
     PNG等二进制由run_code中的plt.savefig('artifacts/plot.png')直接生成；write_file只接受文本。
     重要数值保存为CSV/Parquet并返回EvidenceRef（id/claim/artifact/column/where/statistic/value/unit/run_ids）。
     value表示where筛出的单行单元格；聚合用mean/count等明确操作。Hypothesis.evidence_ids引用这些ID；
@@ -55,7 +57,7 @@ class AutoresearchAgent(Agent):
     分支证据可通过branches/<id>/artifacts/...读取和引用。各方向可动态合并、指导或取消。
     review检查后可能进入revise，须定向修复具体问题，不无限重跑探索；审查通过不等于根因已证实。
     使用inspect_candidate可做有界原生Reflexion，它只读已有证据，不发消息、不改研究文件。
-    所有面向用户的文字通过reply(message_id,brief,image_paths,table_paths)发送，普通工具参数不推流。
+    有阶段性观察需要展示时用reply(message_id,brief,image_paths,table_paths)，普通工具参数不推流；短任务可直接返回最终ResearchReply。
     研究进展是阶段性观察；最终交接由宿主在审查完成后发布，research返回结构化ResearchReply即可。
     不复制最终全文多次，不编造数字或路径；记录失败与反证，不凑十个原因。变量跨进程不保留，文件和历史会保存。
     """
@@ -71,6 +73,7 @@ class AutoresearchAgent(Agent):
     _last_verification: Annotated[dict, hidden, nosnapshot]
     _reflection_verdicts: Annotated[list, hidden, nosnapshot]
     _formula_lab: Annotated[object, hidden, nosnapshot]
+    _datasets: Annotated[object, hidden, nosnapshot]
     physics: Annotated[TextSkill, nosnapshot]
     statistics: Annotated[TextSkill, nosnapshot]
 
@@ -88,7 +91,117 @@ class AutoresearchAgent(Agent):
         self._last_verification = {}
         self._reflection_verdicts = []
         self._formula_lab = FormulaLab(workspace.run, workspace.events) if workspace else None
+        self._datasets = None
+        if workspace and any(
+            (workspace.run / "input" / n).exists()
+            for n in ["runs.parquet", "dataset.json", "samples.parquet", "samples.csv"]
+        ):
+            self._datasets = DatasetSession(workspace.run, workspace.events)
+            workspace.dataset_session = self._datasets
+            self._formula_lab.data_session = self._datasets
         self.round_number = 0
+
+    async def inspect_dataset(
+        self, dataset_ref: str = "", preview_rows: int = 5, include_source: bool = False
+    ) -> dict:
+        """Inspect a version's modality, schema, identity roles and a small index preview.
+
+        DATASET and DATASET_ID inside run_code/run_script identify the selected
+        read-only version. Current scope survives process restarts, Python variables do not.
+        Reading a dataset does not switch scope or enable formula comparisons.
+        """
+        from .dataset_adapter import index_frame
+
+        doc = self._datasets.describe(dataset_ref)
+        frame = index_frame(self._datasets.path(doc["id"]), self._datasets.schema(doc["id"]))
+        doc["preview"] = json.loads(frame.head(min(20, max(0, preview_rows))).write_json())
+        doc["file_count"] = len(doc["files"])
+        doc["files"] = dict(list(doc["files"].items())[:30])
+        if include_source and doc["transform_path"]:
+            source = (self._datasets.path(doc["id"]) / doc["transform_path"]).read_text()
+            doc["transform_source"] = source[:32000]
+            doc["source_truncated"] = len(source) > 32000
+        return doc
+
+    async def list_datasets(self, offset: int = 0, limit: int = 25) -> dict:
+        """Page through immutable dataset versions and parent relationships; no scope change."""
+        page = self._datasets.registry.list(offset, limit)
+        page["datasets"] = [
+            {k: d[k] for k in ["id", "title", "rows", "parents", "version", "relation"]}
+            | {"modality": d["schema"]["modality"]}
+            for d in page["datasets"]
+        ]
+        return page
+
+    async def read_dataset_lineage(self, dataset_ref: str = "") -> dict:
+        """Read the immutable parent graph, transformation provenance and version hashes."""
+        self._datasets.authorize(dataset_ref or self._datasets.current()["id"])
+        graph = self._datasets.registry.lineage(dataset_ref or self._datasets.current()["id"])
+        graph["nodes"] = [
+            {
+                k: d[k]
+                for k in [
+                    "id",
+                    "title",
+                    "rows",
+                    "parents",
+                    "reason",
+                    "content_sha256",
+                    "transform_sha256",
+                    "params",
+                    "provenance",
+                ]
+            }
+            for d in graph["nodes"]
+        ]
+        return graph
+
+    async def derive_dataset(self, derivation: DatasetDerivation, select: bool = True) -> dict:
+        """Register a dataset produced by ANY Python code you wrote and executed.
+
+        Write a source file and output directory in your workspace; output contains
+        an index and optional assets/steps. Declare data_schema, parent references,
+        parameters, reason and relation (subset/transform/merge). A subset may inherit
+        immutable asset paths from parents. Parents are never overwritten. Do not
+        fake labels or held-out samples. select=True switches this agent to the child.
+        """
+        await self._writable()
+        async with self._workspace.lock:
+            doc = self._datasets.derive(derivation)
+            if select:
+                await self._workspace.close()
+                self._datasets.select(doc["id"])
+            return doc
+
+    async def select_dataset(self, dataset_ref: str) -> dict:
+        """Select an existing immutable version for this agent and push the previous scope.
+
+        Subsequent run_code uses DATASET; formula plans freeze this version. Other
+        agents retain their own scopes. Live Python variables reset on a scope switch.
+        """
+        await self._writable()
+        async with self._workspace.lock:
+            await self._workspace.close()
+            return self._datasets.select(dataset_ref)
+
+    async def return_dataset(self, target: str = "parent") -> dict:
+        """Return to the previous scope, or target='root' for this agent's bound root."""
+        await self._writable()
+        if target not in {"parent", "root"}:
+            raise ValueError("Choose parent or root")
+        async with self._workspace.lock:
+            await self._workspace.close()
+            return self._datasets.select(back=target)
+
+    async def request_data(self, request: AcquisitionRequest) -> dict:
+        """Request additional entries through the future unified acquisition interface.
+
+        The default provider is UNAVAILABLE. This release has no network or KG
+        connector. Preserve source/criteria/reason/parent/lead references and request_id;
+        never claim data was fetched unless status='supplied' returns a DatasetRef.
+        """
+        await self._writable()
+        return await self._datasets.acquire(request)
 
     @hidden
     async def _writable(self):
@@ -104,6 +217,8 @@ class AutoresearchAgent(Agent):
 
         Imports, function definitions, files, plots and subprocess scripts are all
         supported. Print concise results; full output and source are journaled.
+        Returns ok, output (text), error and full_output (record path); no stdout key.
+        DATASET is the selected read-only pathlib.Path, DATASET_ID its DatasetRef.
         timeout_s is a hard worker deadline, capped at 300 seconds. On timeout the
         worker and its children are killed; files remain, live variables reset.
         """
@@ -138,7 +253,11 @@ class AutoresearchAgent(Agent):
     async def register_formula(self, study_id: str, formula: FormulaSpec) -> dict:
         """Snapshot an arbitrary Python raw-trace operator as an immutable formula version.
 
-        First write artifacts/name.py defining extract(trace, steps, params) -> scalar or None.
+        For kind=per_sample, write extract(sample, steps, params) -> scalar or None.
+        A sample is a Polars frame for tables/time series, a Path for image/text/mixed assets.
+        For kind=learned define fit(samples, steps, params, labels=None) and
+        transform(state, sample, steps, params). fit sees only fold training inputs/labels;
+        transform sees one sample and learned state. All code remains arbitrary Python.
         trace contains only time_s, step_id and declared sensors/steps; steps contains
         step_id/start_s/end_s. No labels are supplied. Implement windows and cross-sensor
         fusion freely in Python. Supply the exact human expression, units and parameters.
@@ -151,7 +270,8 @@ class AutoresearchAgent(Agent):
     async def evaluate_formula_set(self, study_id: str, formula_refs: list[str]) -> dict:
         """Evaluate one formula or a combination of registered versions against ALL planned models.
 
-        Source is recomputed from raw traces, preprocessing is fitted within each training
+        The selected DatasetRef is frozen; source is recomputed with per-sample isolation
+        or learned fit/transform inside each training fold. Preprocessing is fitted within each training
         fold, dev predictions and host-calculated metrics are saved. Failures remain visible;
         retry resumes missing models, not completed work. Never supply invented score tables.
         """
@@ -212,6 +332,7 @@ class AutoresearchAgent(Agent):
         path must resolve inside workspace. args are passed literally, without a
         shell. A nonzero script exit returns ok=false; inspect the saved traceback.
         Long-lived worker variables are separate from the script process namespace.
+        DATASET and DATASET_ID are injected into scripts too; no path argv is needed.
         """
         await self._writable()
         if not getattr(self._workspace, "research_enabled", True):
@@ -220,9 +341,10 @@ class AutoresearchAgent(Agent):
         if not target.is_relative_to(self._workspace.work) or target.suffix != ".py":
             raise ValueError("Choose a Python script inside the research workspace")
         command = [str(target), *(args or [])]
+        loader = "import os,runpy,sys;from pathlib import Path;target=sys.argv[1];sys.argv=sys.argv[1:];runpy.run_path(target,init_globals={'DATASET':Path(os.environ['RESEARCH_DATASET']),'DATASET_ID':os.environ.get('RESEARCH_DATASET_ID','')},run_name='__main__')"
         code = (
             "import subprocess, sys\n"
-            f"subprocess.run([sys.executable, '-u', *{command!r}], check=True)"
+            f"subprocess.run([sys.executable, '-u', '-c', {loader!r}, *{command!r}], check=True)"
         )
         return await self._workspace.execute(code, timeout_s)
 
@@ -238,6 +360,8 @@ class AutoresearchAgent(Agent):
         Provide clear reply points and exact verified evidence in brief, including
         numbers/units/limitations to preserve. A tool-free generation writes the
         user-facing text; the result includes the delivered Markdown for review.
+        Choose your own stable message_id (e.g. progress-1); it is a publication key,
+        not an incoming user-message ID. Reuse it for an intentional retry/update.
         No literal-string convention, argument preview or tool_stream is needed.
         Only existing artifacts/ PNG/JPEG/WebP/GIF and CSV files may be attached.
         Ordinary tools execute with complete arguments and stream only real output.
@@ -431,7 +555,11 @@ class AutoresearchAgent(Agent):
         return record
 
     async def spawn_research(
-        self, task: str, title: str = "", evidence_paths: list[str] | None = None
+        self,
+        task: str,
+        title: str = "",
+        evidence_paths: list[str] | None = None,
+        dataset_ref: str = "",
     ) -> dict:
         """Start an independent CodeActV2 researcher; give a focused question and optional evidence files.
         Returns an agent_id immediately; the branch owns its code, workspace, history,
@@ -440,7 +568,7 @@ class AutoresearchAgent(Agent):
         await self._writable()
         if self._manager is None:
             raise RuntimeError("Research coordinator is unavailable")
-        return await self._manager.spawn(task, title, evidence_paths or [])
+        return await self._manager.spawn(task, title, evidence_paths or [], dataset_ref or None)
 
     async def list_research(self) -> list[dict]:
         """List persisted research branches and actual lifecycle/review status."""

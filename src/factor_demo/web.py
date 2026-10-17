@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .autoresearch import render_reply
+from .dataset_models import DatasetSchema
 from .live_events import LiveEvents, branch_path, public_artifact_index, public_artifact_path
 from .research_branches import BranchStore
 from .research_workspace import prepare_workspace
@@ -29,6 +30,7 @@ from .synthetic import write_json
 class NewSession(BaseModel):
     title: str = Field(default="腔室匹配研究", max_length=80)
     dataset: str = "etching-v2"
+    data_schema: DatasetSchema | None = None
 
 
 class NewMessage(BaseModel):
@@ -140,6 +142,7 @@ def create_app(project: Path | None = None) -> FastAPI:
             "active_agent_id": job.get("agent_id", "main") if job else "main",
             "targets": cfg["discovery_target_runs"],
             "controls": cfg["discovery_control_runs"],
+            "kind": cfg.get("kind", cfg.get("mode", "etching")),
             "updated": (run / "conversation.jsonl").stat().st_mtime
             if (run / "conversation.jsonl").exists()
             else run.stat().st_mtime,
@@ -147,6 +150,7 @@ def create_app(project: Path | None = None) -> FastAPI:
 
     @app.get("/api/config")
     async def config():
+        from .dataset_api import available_inputs
         from .providers import PRIVATE_CONFIG
 
         data = (
@@ -167,11 +171,7 @@ def create_app(project: Path | None = None) -> FastAPI:
             "capabilities": __import__("factor_demo.capabilities", fromlist=["Capabilities"])
             .Capabilities.load(project / "configs/capabilities.json")
             .model_dump(),
-            "datasets": [
-                p.name
-                for p in (project / "data").glob("etching-v*")
-                if (p / "recipe.json").exists()
-            ],
+            "datasets": available_inputs(project),
         }
 
     @app.get("/api/sessions")
@@ -186,13 +186,23 @@ def create_app(project: Path | None = None) -> FastAPI:
 
     @app.post("/api/sessions")
     async def new_session(body: NewSession):
-        if not re.fullmatch(r"etching-v[\w-]+", body.dataset):
-            raise HTTPException(400, "Unknown dataset")
-        data = (project / "data" / body.dataset).resolve()
-        if data.parent != (project / "data").resolve() or not (data / "recipe.json").is_file():
-            raise HTTPException(400, "Unknown dataset")
+        from .dataset_api import supplied_path
+        from .datasets import prepare_generic_workspace
+
+        data = supplied_path(project, body.dataset)
         run = runs / f"case-{time.strftime('%m%d')}-{uuid.uuid4().hex[:8]}"
-        await asyncio.to_thread(prepare_workspace, data, run)
+        try:
+            if (
+                data.is_dir()
+                and (data / "runs.parquet").exists()
+                and (data / "features.parquet").exists()
+                and body.data_schema is None
+            ):
+                await asyncio.to_thread(prepare_workspace, data, run)
+            else:
+                await asyncio.to_thread(prepare_generic_workspace, data, run, body.data_schema)
+        except (ValueError, OSError) as error:
+            raise HTTPException(400, str(error)) from None
         write_json(run / "ui.json", {"title": body.title})
         return info(run)
 
@@ -229,12 +239,18 @@ def create_app(project: Path | None = None) -> FastAPI:
         events = LiveEvents(run)
         last_id = events.db.execute("SELECT COALESCE(MAX(id),0) FROM events").fetchone()[0]
         events.close()
+        from .dataset_api import dataset_state
+
+        try: data_state=await asyncio.to_thread(dataset_state,run)
+        except (ValueError,OSError): data_state=None  # Historical transcript-only sessions remain readable.
+
         return {
             **info(run),
             "history": history,
             "artifacts": public_artifact_index(run),
             "branches": BranchStore(run).list(),
             "last_event_id": last_id,
+            "dataset_state": data_state,
             "formula_studies": __import__("factor_demo.formula_lab", fromlist=["FormulaLab"])
             .FormulaLab(run)
             .catalog(),
@@ -579,6 +595,9 @@ def create_app(project: Path | None = None) -> FastAPI:
             raise HTTPException(400, "Unsupported artifact type")
         return FileResponse(target, media_type="text/plain; charset=utf-8", filename=target.name)
 
+    from .dataset_api import router as dataset_router
+
+    app.include_router(dataset_router(project, session, jobs))
     dist = project / "frontend/dist"
     if dist.exists():
         app.mount("/", StaticFiles(directory=dist, html=True), name="frontend")

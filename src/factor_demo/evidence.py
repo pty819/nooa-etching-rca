@@ -17,9 +17,36 @@ class EvidenceError(InvariantError):
 
 
 class EvidenceVerifier:
-    def __init__(self, run: Path, events=None):
+    def __init__(self, run: Path, events=None, dataset_ref=None):
         self.run = run.resolve()
         self.events = events
+        self.dataset_ref = dataset_ref
+        self.registry = None
+        root = (
+            events.root
+            if events
+            else self.run.parent.parent
+            if (self.run / "branch.json").is_file()
+            else self.run
+        )
+        if (root / ".datasets/registry.sqlite").exists():
+            from .datasets import DatasetRegistry
+
+            self.registry = DatasetRegistry(root)
+            owner = (
+                events.agent_id
+                if events
+                else self.run.name
+                if (self.run / "branch.json").is_file()
+                else "main"
+            )
+            if self.dataset_ref is None:
+                self.dataset_ref = self.registry.scope(owner)["current"]
+            if owner != "main":
+                bound = self.registry.scope(owner)["root"]
+                ancestry = self.registry.lineage(self.dataset_ref)
+                if bound not in {d["id"] for d in ancestry["nodes"]}:
+                    self.fail("Evidence dataset is outside this agent's assigned scope")
 
     def fail(self, message):
         if self.events:
@@ -27,6 +54,21 @@ class EvidenceVerifier:
         raise EvidenceError(message)
 
     def scope(self):
+        if self.registry is not None and self.dataset_ref:
+            from .dataset_adapter import canonical_index
+            from .dataset_models import DatasetSchema
+
+            doc = self.registry.get(self.dataset_ref)
+            schema = DatasetSchema.model_validate(doc["schema"])
+            root = self.registry.path(self.dataset_ref, verify=True)
+            runs = canonical_index(root, schema)
+            if schema.split_column and set(runs["split"]) & set(schema.excluded_splits):
+                self.fail("Held-out entries are outside discovery scope")
+            if schema.fixed_recipe and (
+                "recipe_id" not in runs.columns or runs["recipe_id"].n_unique() != 1
+            ):
+                self.fail("All discovery runs must share one fixed recipe")
+            return runs
         public = self.run / "input"
         if not (public / "runs.parquet").is_file():
             self.fail("Public runs.parquet is missing")
@@ -43,9 +85,11 @@ class EvidenceVerifier:
         return runs
 
     def verify(self, report: ResearchReply):
+        if report.dataset_ref and report.dataset_ref != self.dataset_ref:
+            return EvidenceVerifier(self.run, self.events, report.dataset_ref).verify(report)
         runs = self.scope()
         public_ids = set(runs["run_id"])
-        recipe = str(runs["recipe_id"][0])
+        recipe = str(runs["recipe_id"][0]) if "recipe_id" in runs.columns and runs.height else None
         paths = set(report.artifacts)
         for h in report.hypotheses:
             paths.update(h.evidence_files)
@@ -59,6 +103,19 @@ class EvidenceVerifier:
             self.fail("Evidence IDs must be unique")
         checks = []
         for e in report.evidence:
+            scoped = self
+            if e.dataset_ref and e.dataset_ref != self.dataset_ref:
+                scoped = EvidenceVerifier(self.run, self.events, e.dataset_ref)
+                evidence_runs = scoped.scope()
+                evidence_ids = set(evidence_runs["run_id"])
+                evidence_recipes = (
+                    set(evidence_runs["recipe_id"])
+                    if "recipe_id" in evidence_runs.columns
+                    else set()
+                )
+            else:
+                evidence_ids = public_ids
+                evidence_recipes = set(runs["recipe_id"]) if "recipe_id" in runs.columns else set()
             if not e.unit.strip():
                 self.fail(f"{e.id}: specify units (use 1 for dimensionless or runs for counts)")
             try:
@@ -68,9 +125,9 @@ class EvidenceVerifier:
             sha = hashlib.sha256(path.read_bytes()).hexdigest()
             if e.sha256 and e.sha256 != sha:
                 self.fail(f"{e.id}: evidence file hash changed")
-            if set(e.run_ids) - public_ids:
+            if set(e.run_ids) - evidence_ids:
                 self.fail(f"{e.id}: contains a run outside the public discovery set")
-            if e.recipe_id and e.recipe_id != recipe:
+            if e.recipe_id and e.recipe_id not in evidence_recipes:
                 self.fail(f"{e.id}: recipe mismatch")
             try:
                 if path.suffix.lower() == ".csv":
@@ -79,9 +136,18 @@ class EvidenceVerifier:
                     frame = pl.read_parquet(path)
                 else:
                     self.fail(f"{e.id}: numerical evidence must be CSV or Parquet")
-                if "run_id" in frame.columns and set(frame["run_id"].drop_nulls()) - public_ids:
+                identity_column = "run_id"
+                if scoped.registry is not None and scoped.dataset_ref:
+                    identity_column = scoped.registry.get(scoped.dataset_ref)["schema"]["id_column"]
+                if (
+                    identity_column in frame.columns
+                    and set(frame[identity_column].cast(pl.String).drop_nulls()) - evidence_ids
+                ):
                     self.fail(f"{e.id}: table contains withheld/unknown runs")
-                if "recipe_id" in frame.columns and set(frame["recipe_id"].drop_nulls()) - {recipe}:
+                if (
+                    "recipe_id" in frame.columns
+                    and set(frame["recipe_id"].drop_nulls()) - evidence_recipes
+                ):
                     self.fail(f"{e.id}: table includes another recipe")
                 for key, value in e.where.items():
                     frame = frame.filter(pl.col(key) == value)
@@ -127,6 +193,7 @@ class EvidenceVerifier:
                     "actual": actual,
                     "unit": e.unit,
                     "sha256": sha,
+                    "dataset_ref": e.dataset_ref or self.dataset_ref,
                 }
             )
         for h in report.hypotheses:
@@ -138,6 +205,7 @@ class EvidenceVerifier:
             self.events.emit("validation.passed", checks=len(checks), files=len(paths))
         return {
             "recipe_id": recipe,
+            "dataset_ref": self.dataset_ref,
             "public_runs": len(public_ids),
             "checks": checks,
             "hypotheses": len(report.hypotheses),
@@ -158,6 +226,11 @@ def research_postcondition(agent, result, call):
         and isinstance(result, ResearchReply)
         and call.method_name in {"research", "revise"}
     ):
+        datasets = getattr(agent, "_datasets", None)
+        if datasets is not None and result.dataset_ref is None:
+            result.dataset_ref = datasets.current()["id"]
+        if result.intent=="visualization" and (result.hypotheses or result.formula_comparison or (getattr(agent,"_formula_lab",None) and agent._formula_lab.active())):
+            raise EvidenceError("Visualization-only delivery cannot include hypotheses or active formula selection; use report/comparison intent")
         manager = getattr(agent, "_manager", None)
         if manager is not None and any(
             row["mission"] == manager.mission
@@ -172,7 +245,9 @@ def research_postcondition(agent, result, call):
         lab = getattr(agent, "_formula_lab", None)
         if lab is not None:
             try:
-                agent._last_verification["formula_comparison"] = lab.handoff(result.formula_comparison)
+                agent._last_verification["formula_comparison"] = lab.handoff(
+                    result.formula_comparison
+                )
             except ValueError as error:
                 raise EvidenceError(str(error)) from error
 

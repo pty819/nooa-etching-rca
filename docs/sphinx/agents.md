@@ -62,7 +62,7 @@ aeon集合输入通常有case/channel/time三个维度；具体方法必须核�
 
 worker为Numba JIT和joblib临时文件指定自身workspace下的缓存路径，继续保留文件/网络限制。核心依赖不等于安装了所有可选extras；遇到缺包先如实说明，由宿主补齐并锁定，不在隔离worker里联网安装。
 
-Agent类文档表达行为契约：以证据产生和修订假设、区分因果层级、使用公开工具、返回结构化引用，并正确理解外层调度环境与科学workspace的区别。领域规则由 `physics` 和 `statistics` 两个TextSkill承载，原生SkillRegistry按实例注册并激活。
+Agent类文档表达行为契约：以证据产生和修订假设、区分因果层级、使用公开工具、返回结构化引用，并正确理解外层调度环境与科学workspace的区别。领域规则由 `physics` 和 `statistics` 两个TextSkill承载，原生SkillRegistry通过agent.skills接入框架的原生目录表达式，按实例注册；统计技能激活，固定recipe会话才自动激活刻蚀物理技能。核心规则也进入稳定Context，并要求按需读doc(self.statistics/physics)。
 
 物理技能强调固定配方、时段两两对比、设定值与联锁/反馈含义，以及不能用不可观测代理排除真实接触问题。统计技能强调lot独立性、监督选择泄漏、OPLS一致变换、有限置换p值下界、恢复率分母和闭环证据依赖。两者不是固定算法脚本，而是研究和审查必须遵守的解释边界。
 
@@ -73,7 +73,7 @@ Agent类文档表达行为契约：以证据产生和修订假设、区分因果
 :alt: 272000总窗口预留50000输出，可用输入222000，177600触发原生摘要；完整历史仍在SQLite，稳定技能和动态任务分块注入。
 ```
 
-稳定约束用前缀Context；当前任务、最近十条专家反馈、最多十个近期假设及有界分支状态独立组织。较旧方向通过工具查询，而不是把所有报告无限重复塞进prompt。快照恢复后重新注入运行对象和技能，防止nosnapshot对象缺失或旧Context串用。
+稳定约束用前缀Context，任务、角色权限、当前DatasetRef/schema/选择栈单独注入；当前任务、最近十条专家反馈、最多十个近期假设及有界分支状态独立组织。较旧方向通过工具查询，而不是把所有报告无限重复塞进prompt。快照恢复后重新注入运行对象和技能，防止nosnapshot对象缺失或旧Context串用。
 
 TokenBudgetSummarizer保留最近10条事件，目标摘要约8000字符。272000减50000给出222000输入预算，默认阈值是其80%，即177600。摘要调用同样经过预算包装；原始事件仍存NOOA SQLite，摘要不是删除审计证据。
 
@@ -81,7 +81,7 @@ TokenBudgetSummarizer保留最近10条事件，目标摘要约8000字符。27200
 
 ## 中文交接的现状
 
-阶段性 `reply` 由agent主动调用；每次内部计算自动留日志，但不自动生成一篇长报告。候选报告有假设、数学证据、替代解释与反证，最终正文经独立撰写器整理，撰写器无工具且不得增加数字或改变证据等级。
+阶段性 `reply` 由agent主动调用；每次内部计算自动留日志，但不自动生成一篇长报告。候选报告有假设、数学证据、替代解释与反证，正式研究最终正文经独立撰写器整理，撰写器无工具且不得增加数字或改变证据等级。纯可视化intent只做基础检查后直接交付；含假设或公式比较时不能走该快速出口。正文失败会交付已保存报告，并单独记录delivery_status，不重复研究。
 
 尚未将“每次改算必须列传感器全名、step、旧值、新值、修改原因、结论变化”全部变成硬字段。传感器与特征名目前可包含在报告和证据中，但详细程度存在模型自由度。此缺口在[文档自审](quality.md)列为后续工作，不能用prompt要求代替已实现schema。
 
@@ -89,3 +89,11 @@ TokenBudgetSummarizer保留最近10条事件，目标摘要约8000字符。27200
 ## 专家公式研究工具
 
 原生CodeActV2可调用create_formula_study、begin_formula_comparison、register_formula、evaluate_formula_set、read_formula_study、retire_formula_set及freeze_formula_selection。只读讨论与Reflexion禁止变更；Context跨轮注入研究ID、版本和选择状态。仅本轮创建、修改、执行或显式继续比较时，postcondition要求有效选优或明确未完成；只读、普通画图和新轮任务不受历史公式研究阻塞，Predict获得宿主证据，正文最终提交附带确定性公式报告。任意Python算子和四类固定比较模型的边界见[公式研究](formula-research.md)。
+
+## 动态范围与有界状态
+
+CodeAct用inspect_dataset探索schema，用任意Python生成划分/合并/变换脚本，derive_dataset登记后select_dataset或return_dataset控制范围。领域规则不会把普通表格、文本、图片伪装成刻蚀数据。分支Context声明can_spawn，宿主限制子分支递归派生。公式历史仅摘要最近五项与本轮活跃研究，每项最多八个近期版本/试验；原始记录可用工具查询。
+
+共享token账本按请求内容和配置输出上限预留，并保留未知请求的保守回退；272k上下文、50k输出、thinking/effort及原生摘要阈值保持既有配置。修订次数耗尽显示revision_limit，预算耗尽显示budget_exhausted，两者不能混写。
+
+工具说明明确了DATASET/DATASET_ID也注入run_script，执行文本返回字段为output；EvidenceRef.run_ids只能填写数据集中的真实样本身份，数据集级计数可留空。reply.message_id是自行选择的稳定发布键。未知契约要求先读文档或做小步调用，减少在执行前猜测接口与长篇预演。

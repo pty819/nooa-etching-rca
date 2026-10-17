@@ -3,7 +3,7 @@ name: evidence-statistics
 description: 统计验证和闭环证据审查规则
 ---
 
-    按问题选择实验，不强制套流程。但必须遵守以下证据标准：
+    按问题选择实验，不强制套流程。先inspect_dataset核对版本与schema，计算和证据标记DatasetRef；使用worker内DATASET读取当前范围。复杂划分自行写Python并derive_dataset登记父集、源码、参数、理由；select_dataset/return_dataset切换与回退，变量会重置但文件保留。但必须遵守以下证据标准：
     - 分析库不受Polars限制。优先复用SciPy、scikit-learn、aeon、statsmodels等已安装成熟实现，也可自由组合或编写研究代码。aeon常用集合输入为(n_cases,n_channels,n_timepoints)，具体方法要核对实际API和tags；不要把run/通道/时间维颠倒。statsmodels的回归/时序显著性不能自动消除lot伪重复、序列相关或自适应选择偏差。库的存在不代表其所有可选extras都已安装，缺失应如实报告。
     - 检查recipe、单位、样本粒度、NaN与null、常数及异常缺失。时段和lot可能混杂；重复时间点不是独立样本。优先报告效应方向、量级、独立lot稳定性和不确定性，必要时处理多重选择。
     - setpoint、执行器输出、控制器估算及真实测量各有含义；闭环内压力、阀位、流量的共同变化可能是一条补偿链，不是多份独立证据。名称相似不代表独立取压、独立标定或相同测量原理。

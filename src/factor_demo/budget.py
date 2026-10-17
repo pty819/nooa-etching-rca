@@ -144,12 +144,13 @@ class TokenLedger:
 
 
 class BudgetedClient(AdmissionControl):
-    def __init__(self, base, config, ledger, events, reserve_tokens):
+    def __init__(self, base, config, ledger, events, reserve_tokens, output_ceiling=50000):
         super().__init__(base, config)
         self.controller = CountedController(self.controller)
         self.ledger = ledger
         self.events = events
         self.reserve_tokens = reserve_tokens
+        self.output_ceiling = output_ceiling
         self.budget_exhausted = False
 
     def call(self, *args, **kwargs):
@@ -167,8 +168,42 @@ class BudgetedClient(AdmissionControl):
             if summary_fork_active()
             else getattr(kwargs.get("output_model"), "__name__", "research")
         )
+        reservation = self.reserve_tokens
+        # UTF-8 byte count is deliberately conservative, with framing/schema headroom.
+        # Unknown message/tool types fall back to the full configured context ceiling.
         try:
-            key = self.ledger.reserve(self.reserve_tokens, self.events.agent_id, purpose)
+
+            def serialize(value):
+                if hasattr(value, "model_json_schema"):
+                    return value.model_json_schema()
+                if hasattr(value, "model_dump"):
+                    return value.model_dump(mode="json")
+                if hasattr(value, "parameters_model"):
+                    return {
+                        "name": getattr(value, "name", ""),
+                        "description": getattr(value, "description", ""),
+                        "parameters": value.parameters_model.model_json_schema()
+                        if value.parameters_model
+                        else {},
+                    }
+                raise TypeError("Unknown request element")
+
+            request = {
+                "messages": args[0] if args else kwargs.get("messages", []),
+                "tools": kwargs.get("tools"),
+                "output_model": kwargs.get("output_model"),
+            }
+            size = len(json.dumps(request, ensure_ascii=False, default=serialize).encode()) + 8192
+            output = int(
+                kwargs.get("max_tokens", kwargs.get("max_completion_tokens", self.output_ceiling))
+            )
+            if not 0 < output <= self.output_ceiling:
+                raise ValueError("Output exceeds configured ceiling")
+            reservation = min(self.reserve_tokens, 2 * (size + output))
+        except (TypeError, ValueError, AttributeError):
+            pass
+        try:
+            key = self.ledger.reserve(reservation, self.events.agent_id, purpose)
         except BudgetExceeded:
             self.budget_exhausted = True
             self.events.emit("budget.exhausted", **self.ledger.snapshot())
@@ -195,9 +230,7 @@ class BudgetedClient(AdmissionControl):
             self.ledger.settle(
                 key,
                 usage,
-                unreported_retry_tokens=max(0, counter[0] - 1) * (self.reserve_tokens // 2)
-                if usage
-                else 0,
+                unreported_retry_tokens=max(0, counter[0] - 1) * (reservation // 2) if usage else 0,
             )
             self.events.emit("budget.usage", purpose=purpose, **self.ledger.snapshot())
             return result
@@ -238,6 +271,7 @@ class MissionBudget:
             self.ledger,
             events,
             settings.context_window * 2,
+            settings.max_output_tokens,
         )
 
     def snapshot(self):

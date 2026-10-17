@@ -18,15 +18,17 @@ class FormulaSpec(BaseModel):
     source: str = Field(
         description="Existing Python source under artifacts/ defining extract(trace, steps, params)."
     )
-    sensors: list[str] = Field(min_length=1)
-    steps: list[int] = Field(min_length=1)
+    sensors: list[str] = Field(default_factory=list)
+    steps: list[int] = Field(default_factory=list)
     params: dict = Field(default_factory=dict)
     unit: str = Field(min_length=1)
+    kind: Literal["per_sample","learned"] = "per_sample"
 
 
 class FormulaPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=200)
+    dataset_ref: str | None = None
     labels: list[str] = Field(min_length=2, max_length=2)
     metric: Literal["balanced_accuracy", "accuracy", "f1_macro"] = "balanced_accuracy"
     folds: int = Field(default=3, ge=2, le=10)

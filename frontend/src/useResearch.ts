@@ -57,6 +57,7 @@ export function useResearch() {
     notices: {} as Record<string, string[]>,
     budget: null as Record<string, number> | null,
     replaying: false,
+    datasetRevision:0,
   });
   const scroll = ref<HTMLDivElement | null>(null),
     textarea = ref<HTMLTextAreaElement | null>(null);
@@ -66,7 +67,9 @@ export function useResearch() {
     cursor = 0,
     nearBottom = true,
     replayUntil = 0,
-    generation = 0;
+    generation = 0,
+    artifactRequest = 0;
+  let artifactRefresh: ReturnType<typeof setTimeout> | undefined;
   let request: { session: string; agent:string; text: string; id: string } | null = null;
   const latest = computed(() => s.calls.at(-1)),
     thoughtChars = computed(() =>
@@ -129,20 +132,30 @@ export function useResearch() {
   async function loadArtifacts() {
     const name = s.selected;
     if (!name) return;
+    const sequence = ++artifactRequest;
+    const own = generation;
     try {
       const data = await api("/sessions/" + name);
-      if (s.selected === name) {
+      if (s.selected === name && own === generation && sequence === artifactRequest) {
         s.artifacts = data.artifacts;
         s.branches = data.branches || [];
         s.formulaStudies = data.formula_studies || [];
       }
     } catch {}
   }
+  function scheduleArtifacts() {
+    if (artifactRefresh) return;
+    artifactRefresh = setTimeout(() => {
+      artifactRefresh = undefined;
+      void loadArtifacts();
+    }, 75);
+  }
   function call(id: string, agentId = "main") {
     let c = s.calls.find((c) => c.id === id);
     if (!c) {
       c = { id, agent_id: agentId, thinking: "", content: "", ended: false };
       s.calls.push(c);
+      if(s.calls.length>60)s.calls.splice(0,s.calls.length-60);
       c = s.calls.at(-1)!;
     }
     return c;
@@ -163,11 +176,12 @@ export function useResearch() {
         }
       };
       if (e.type.startsWith('formula.') && !replay) {
-        void loadArtifacts();
+        scheduleArtifacts();
         if (e.type === 'formula.evaluation.start') phase('正在比较专家公式');
         if (e.type === 'formula.replay.start') phase('正在重算最佳公式');
         if (e.type === 'formula.selection.frozen') phase('最佳候选已重跑核对');
       }
+      if(e.type.startsWith('dataset.') && !replay){s.datasetRevision++;scheduleArtifacts();}
       switch (e.type) {
         case "user.message":
           s.messages.push({
@@ -262,7 +276,7 @@ export function useResearch() {
               ? "审查通过"
               : d.status === "needs_revision"
                 ? "按审查意见补证"
-                : d.status === "not_reviewed" ? "尚未完成有效审查" : "审查预算耗尽，保留局限",
+                : d.status === 'revision_limit' ? '达到修订上限，结论待复核' : d.status === 'not_required' ? '按需交付图表' : d.status === "not_reviewed" ? "尚未完成有效审查" : "审查预算耗尽，保留局限",
           );
           break;
         case "validation.issue":
@@ -439,6 +453,7 @@ export function useResearch() {
           break;
       }
     }
+    if(s.tools.length>240){const active=s.tools.filter(t=>t.state==='running');s.tools=[...s.tools.filter(t=>t.state!=='running').slice(-Math.max(0,240-active.length)),...active];}
     if (replayDone) {
       replayUntil = 0;
       nearBottom = true;
@@ -447,6 +462,9 @@ export function useResearch() {
     }
   }
   function disconnect() {
+    if (artifactRefresh) clearTimeout(artifactRefresh);
+    artifactRefresh = undefined;
+    artifactRequest++;
     source?.close();
     source = null;
     if (frame) cancelAnimationFrame(frame);
@@ -468,6 +486,7 @@ export function useResearch() {
       s.artifacts = [];
       s.branches = [];
       s.formulaStudies = [];
+      s.datasetRevision++;
       s.selectedAgent = "main";
       s.activeAgent = "main";
       s.agentPhases = {};

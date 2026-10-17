@@ -51,7 +51,9 @@ def test_real_sdk_reply_stream_has_no_tools_and_no_glm_tool_stream(tmp_path):
                 await asyncio.sleep(0.02)
             # Verify the user already received partial text while inference is open.
             rows = events.since(0)
-            assert len([e for e in rows if e["type"] == "reply.delta"]) == 3
+            deltas = [e for e in rows if e["type"] == "reply.delta"]
+            assert 2 <= len(deltas) <= 3
+            assert "".join(e["data"]["text"] for e in deltas) == "已验证：目标腔 75 次 🌡️。"
             assert not any(e["type"] == "reply.commit" for e in rows)
             yield frame({}, "stop")
             yield "data: [DONE]\n\n"

@@ -1,0 +1,21 @@
+sequenceDiagram
+    actor User as 专家
+    participant Agent as CodeActV2
+    participant Registry as 版本与作用域
+    participant Worker as 隔离worker
+    User->>Agent: 先研究某个子集
+    Agent->>Worker: 任意Python生成划分结果
+    Worker-->>Agent: 保存子集与脚本
+    Agent->>Registry: 登记D1，父集D0，源码/参数/理由
+    Registry->>Registry: 不可变内容 + current=D1, stack=[D0]
+    Agent->>Worker: 关闭旧进程，DATASET=D1
+    Worker-->>Agent: 子集结果与DatasetRef
+    Agent->>Registry: 登记并选择D2
+    Registry->>Registry: current=D2, stack=[D0,D1]
+    Note over Registry: 进程恢复读取同一SQLite作用域
+    User->>Agent: 回到上一范围
+    Agent->>Registry: return parent
+    Registry-->>Agent: current=D1
+    User->>Agent: 回到主数据
+    Agent->>Registry: return root
+    Registry-->>Agent: current=D0，D1/D2仍保留

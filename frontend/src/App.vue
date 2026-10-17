@@ -25,6 +25,7 @@ import {
 } from "lucide-vue-next";
 import ResearchMessage from "./components/ResearchMessage.vue";
 import FormulaStudies from "./components/FormulaStudies.vue";
+import DatasetPanel from "./components/DatasetPanel.vue";
 import { useResearch } from "./useResearch";
 import { asset } from "./api";
 const {
@@ -67,6 +68,7 @@ const names: Record<string, string> = {
   cancel_research: "停止研究分支",
   resume_research: "恢复研究分支",
   inspect_candidate: "局部自反思",
+  inspect_dataset:'查看数据版本',list_datasets:'查找数据集',read_dataset_lineage:'查看数据血缘',derive_dataset:'登记动态子集',select_dataset:'切换分析范围',return_dataset:'返回父集或主集',request_data:'登记补数请求',
   create_formula_study: "固定公式比较协议",
   begin_formula_comparison: "继续本轮公式比较",
   register_formula: "登记公式版本",
@@ -87,7 +89,7 @@ function fileSize(size: number) {
   return size < 1024 ? size + " B" : (size / 1024).toFixed(1) + " KB";
 }
 function statusLabel(value: string) {
-  return ({ queued: '等待执行', starting: '正在启动', running: '研究中', stopping: '正在停止', completed: '已完成', failed: '执行失败', interrupted: '已中断', cancelled: '已停止', reviewing: '审查中', passed: '检查通过', needs_revision: '需要补证', budget_exhausted: '预算耗尽，保留局限', not_reviewed: '尚未完成有效审查' } as Record<string,string>)[value] || value;
+  return ({ queued: '等待执行', starting: '正在启动', running: '研究中', stopping: '正在停止', completed: '已完成', failed: '执行失败', interrupted: '已中断', cancelled: '已停止', reviewing: '审查中', passed: '检查通过', needs_revision: '需要补证', budget_exhausted: '预算耗尽，保留局限', revision_limit:'达到修订上限，结论待复核', not_required:'图表按需交付', not_reviewed: '尚未完成有效审查' } as Record<string,string>)[value] || value;
 }
 </script>
 <template>
@@ -108,6 +110,7 @@ function statusLabel(value: string) {
         <button
           v-for="session in s.sessions"
           :key="session.id"
+          :aria-label="session.title"
           :class="['session', { selected: session.id === s.selected }]"
           @click="s.selected = session.id"
         >
@@ -115,7 +118,7 @@ function statusLabel(value: string) {
           <div>
             <strong>{{ session.title }}</strong
             ><small
-              >{{ session.targets }} 次目标加工 ·
+              >{{ session.targets }} {{session.kind==='dynamic_datasets'?'个样本':'次目标加工'}} ·
               {{
                 new Date(session.updated * 1000).toLocaleDateString("zh-CN", {
                   month: "2-digit",
@@ -185,7 +188,7 @@ function statusLabel(value: string) {
         <div>
           <div class="eyebrow"><span />CHAMBER MATCHING</div>
           <h1>让异常，成为可检验的线索。</h1>
-          <p>固定配方，比较时段变化。由 agent 研究，由专家审查。</p>
+          <p>{{s.meta?.kind==='dynamic_datasets'?'按问题划分数据，逐步验证线索。':'固定配方，比较时段变化。'}}由 agent 研究，由专家审查。</p>
         </div>
         <span :class="['status-pill', { working: s.active }]"
           ><span :class="{ 'live-dot': s.active }" />{{
@@ -196,11 +199,11 @@ function statusLabel(value: string) {
       <div class="facts">
         <span
           ><Activity :size="14" /><b>{{ s.meta?.targets ?? "—" }}</b>
-          次目标加工</span
+          {{s.meta?.kind==='dynamic_datasets'?'个样本':'次目标加工'}}</span
         ><span
           ><FlaskConical :size="14" /><b>{{ s.meta?.controls ?? "—" }}</b>
           次同期参考</span
-        ><span><i class="tiny-lock" />固定 Recipe</span
+        ><span><i class="tiny-lock" />{{s.meta?.kind==='dynamic_datasets'?'版本与血缘留存':'固定 Recipe'}}</span
         ><span class="connection"
           ><i :class="s.connected ? 'connected' : 'disconnected'" />{{
             s.connected ? "实时连接" : "连接恢复中"
@@ -366,6 +369,7 @@ function statusLabel(value: string) {
           <FolderOpen :size="14" />研究产物
           <span>{{ s.artifacts.length }}</span>
         </button>
+        <button :class="{on:s.tab==='datasets'}" @click="s.tab='datasets'"><Activity :size="14" />数据范围</button>
         <button :class="{ on: s.tab === 'formulas' }" @click="s.tab = 'formulas'; loadArtifacts()">
           <FlaskConical :size="14" />公式比较<span>{{ s.formulaStudies.length }}</span>
         </button>
@@ -497,6 +501,9 @@ function statusLabel(value: string) {
           本轮记录已保存，可继续提问或切换到仅讨论。
         </div>
       </div>
+      <div v-else-if="s.tab === 'datasets'" class="panel-scroll files">
+        <DatasetPanel :session="s.selected" :agent="s.selectedAgent" :active="s.active" :supplied="s.datasets" :revision="s.datasetRevision" @changed="loadArtifacts" />
+      </div>
       <div v-else-if="s.tab === 'formulas'" class="panel-scroll files">
         <FormulaStudies :studies="s.formulaStudies" :session="s.selected" />
       </div>
@@ -543,7 +550,7 @@ function statusLabel(value: string) {
           <X :size="18" /></button
         ><span class="eyebrow">NEW INVESTIGATION</span>
         <h2>开始新的研究会话</h2>
-        <p>使用固定配方的数据，保留独立的研究记录。</p>
+        <p>选择已提供的表格、曲线或图文数据，保留独立研究记录。</p>
         <label>会话名称<input v-model="s.newTitle" maxlength="80" /></label
         ><label
           >数据集<select v-model="s.dataset">

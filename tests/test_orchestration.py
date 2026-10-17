@@ -28,8 +28,10 @@ class FakeProvider:
         fail_branch=False,
         cancel_branch=False,
         invalid_review=False,
+        visualization=False,
     ):
         self.invalid_review = invalid_review
+        self.visualization = visualization
         self.fail_branch = fail_branch
         self.cancel_branch = cancel_branch
         self.failed_identity = None
@@ -61,6 +63,7 @@ class FakeProvider:
                 if self.parallel and index == 0:
                     value = 4 if len(self.tools) % 2 else 6
                 candidate = {
+                    "intent": "visualization" if self.visualization else "report",
                     "summary": "公开数据的数值检查，不能推断根因。",
                     "hypotheses": [],
                     "artifacts": ["artifacts/evidence.csv"],
@@ -192,9 +195,10 @@ def endpoint(monkeypatch):
     running = []
 
     def create(
-        parallel=False, revision=False, fail_branch=False, cancel_branch=False, invalid_review=False
+        parallel=False, revision=False, fail_branch=False, cancel_branch=False, invalid_review=False,
+        visualization=False,
     ):
-        fake = FakeProvider(parallel, revision, fail_branch, cancel_branch, invalid_review)
+        fake = FakeProvider(parallel, revision, fail_branch, cancel_branch, invalid_review, visualization)
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]

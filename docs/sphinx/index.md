@@ -45,6 +45,7 @@ GitHub Pages发布的是静态设计文档，不是研究服务。仓库不包�
 requirements
 architecture
 data-contracts
+dynamic-datasets
 simulation
 ```
 
@@ -55,6 +56,7 @@ simulation
 agents
 algorithms
 formula-research
+feature-isolation
 evidence-review
 concurrency
 streaming
