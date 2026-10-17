@@ -11,6 +11,12 @@
 :alt: 专家提出公式，agent登记源码版本，程序固定lot验证计划、隔离提取、训练模型和计算分数，重算最佳候选后通过交接门禁发布报告。
 ```
 
+## 按本轮任务需要启用
+
+普通画图、查看分布、解释已有结果、探索一个自定义特征，可以直接使用run_code和读取工具，不要求创建公式研究、训练模型、完成历史比较或重算最佳结果。只有本轮创建、修改或执行公式比较，或者调用begin_formula_comparison明确继续旧研究，才启用本轮的公式交接门禁；单纯read_formula_study不启用。
+
+门禁状态不写入历史研究库或NOOA快照，每轮开始重置；历史公式、失败与模型结果完整保留。已启用的比较可以明确交付incomplete，而不必强行完成计算。即使本轮未启用，若最终报告显式声称某个冻结选择有效，程序仍核验该选择。基础文件与证据校验继续适用。
+
 ## 公式是原始序列上的程序
 
 每个`FormulaSpec`包含名称、文字表达式、物理解释、传感器、step、参数、单位和源码路径。源码提供`extract(trace, steps, params)`，返回该run一个数值或显式缺失`None`。算法可以使用任意已安装的科学Python库；没有把专家限制在均值、比值等少数算子中。标量列表可组成多列特征集，分别计算或联合建模。
@@ -84,7 +90,7 @@ def extract(trace, steps, params):
 2. `register_formula(study_id, FormulaSpec(...))`冻结原始序列提取程序与解释。
 3. `evaluate_formula_set(study_id, ["product@1"])`比较单公式；传多个版本则比较组合。
 4. 所有有效特征集乘模型套件均成功后，`freeze_formula_selection`从原始数据重算第一名，要求特征、逐片预测及分数一致。
-5. 返回`ResearchReply.formula_comparison=FormulaHandoff(study_id=..., status="selected", selection_id=...)`。未完成必须显式`status="incomplete"`并说明原因；遗漏字段、引用失效选择或关键产物哈希不一致均不能交接。
+5. 返回`ResearchReply.formula_comparison=FormulaHandoff(study_id=..., status="selected", selection_id=...)`。未完成必须显式`status="incomplete"`并说明原因；本轮已启用比较时遗漏字段、引用失效选择或关键产物哈希不一致均不能交接。
 
 新版本、组合、排除或试验状态变化会使当前选择失效；旧选择仍保存。无法稳定重跑的随机公式不会被确认。Predict审查获得宿主核验的公式证据包；最终Markdown中的公式、传感器、step、参数、排名和下载链接由宿主追加，即便正文模型遗漏比较表，最终提交消息仍包含规范记录。前端“公式比较”页恢复同一SQLite状态，并显示失败和排除理由。
 
@@ -95,3 +101,5 @@ def extract(trace, steps, params):
 `tests/test_formula_lab.py`覆盖真实macOS隔离worker、融合语义与20%窗口、单公式/组合和四类模型、lot折、输入变更、缺失比较阻断、失败保留与显式排除、版本失效、最佳重跑、随机公式重跑拒绝、公开副本改写、规范预测改写、NOOA CodeAct实际工具调用、只读Reflexion约束和只读HTTP下载。NOOA测试使用脚本化模型响应以固定调用，不声称进行了新的独立大模型科学发现。
 
 Vue测试检查等待与已重跑状态、版本、分数、失败和排除理由；完整系统原有回归继续执行。最新计数见[发布验证记录](quality.md)。
+
+本轮触发回归另外覆盖：历史未完成研究不阻塞新的原生CodeAct画图任务；只读不启用；显式继续后必须交接；新轮重置；普通任务预算耗尽不携带历史公式交接；未启用时显式选优声明仍会被校验。

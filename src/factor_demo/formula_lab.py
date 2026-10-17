@@ -80,6 +80,19 @@ class FormulaLab:
         self.root = events.root if events else self.run
         self.owner = events.agent_id if events else "main"
         self.base = self.root / ".formula-lab"
+        # Turn-local, deliberately absent from the durable study registry/snapshot.
+        self._active_studies = set()
+
+    def begin_turn(self):
+        self._active_studies.clear()
+
+    def begin(self, identity):
+        study = self.get(identity)
+        self._active_studies.add(identity)
+        return self.public(study)
+
+    def active(self):
+        return [s for s in self.catalog() if s["id"] in self._active_studies]
 
     @contextmanager
     def transaction(self):
@@ -163,13 +176,14 @@ class FormulaLab:
                         "labels": s["plan"]["labels"],
                         "versions": [f["ref"] for f in s["formulas"]],
                         "selection_id": s["selection_id"],
+                        "required_this_turn": s["id"] in self._active_studies,
                         "incomplete_trials": [
                             t["id"] for t in s["trials"] if t["status"] != "succeeded"
                         ],
                     }
                     for s in self.catalog()
                 ],
-                "contract": "需要公式选优时先create_formula_study；register_formula快照任意Python；evaluate_formula_set比较单公式或组合；全部完成后freeze_formula_selection。交接必须含formula_comparison，失败则incomplete+reason。",
+                "contract": "公式比较按本轮任务需要启用。普通画图、数据查看、解释旧结果、自由探索可直接run_code/read，不启用选优。需要比较或确认最佳公式时create_formula_study或begin_formula_comparison；登记/修改/执行比较也自动启用。本轮启用后交接必须含formula_comparison，未完成则incomplete+reason。历史研究不会自动要求本轮继续比较。",
             },
             ensure_ascii=False,
         )
@@ -258,6 +272,7 @@ class FormulaLab:
         }
         with self.transaction() as db:
             self.save(db, study)
+        self._active_studies.add(identity)
         self.export(study)
         self.emit("study.created", identity, title=spec.title)
         return self.public(study)
@@ -310,6 +325,7 @@ class FormulaLab:
             if self.owner not in study["plan"]["participants"]:
                 study["plan"]["participants"].append(self.owner)
             self.save(db, study)
+        self._active_studies.add(identity)
         self.export(study)
         self.emit("formula.registered", identity, ref=ref)
         return row
@@ -328,6 +344,7 @@ class FormulaLab:
             study["revision"] += 1
             study["selection_id"] = None
             self.save(db, study)
+        self._active_studies.add(identity)
         self.emit("set.created", identity, set_id=item["id"])
         return item
 
@@ -341,6 +358,7 @@ class FormulaLab:
             study["selection_id"] = None
             study["revision"] += 1
             self.save(db, study)
+        self._active_studies.add(identity)
         self.export(study)
         self.emit("set.excluded", identity, set_id=set_id, reason=reason)
         return item
@@ -484,6 +502,7 @@ class FormulaLab:
         self.emit("trial.updated", identity, trial_id=trial_id, status=row["status"])
 
     async def evaluate(self, identity, refs):
+        self.begin(identity)
         item = self.feature_set(identity, refs)
         study = self.get(identity)
         self.verify_input(study)
@@ -619,6 +638,7 @@ class FormulaLab:
         return folder
 
     async def freeze(self, identity):
+        self.begin(identity)
         attempt = {
             "id": "replay-" + uuid.uuid4().hex[:12],
             "owner": self.owner,
@@ -738,13 +758,15 @@ class FormulaLab:
         return folder
 
     def handoff(self, handoff: FormulaHandoff | None):
-        bound = self.bound()
+        bound = self.active()
         if not bound and handoff is None:
             return None
         if handoff is None:
             raise ValueError(
-                "Formula study active: ResearchReply.formula_comparison must select a replayed result or explicitly report incomplete"
+                "Formula comparison active this turn: ResearchReply.formula_comparison must select a replayed result or explicitly report incomplete"
             )
+        if bound and handoff.study_id not in self._active_studies:
+            raise ValueError("Handoff must reference a formula comparison active this turn")
         study = self.get(handoff.study_id)
         self.verify_input(study)
         if handoff.status == "incomplete":

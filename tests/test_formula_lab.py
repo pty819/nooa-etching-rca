@@ -383,3 +383,76 @@ def test_duplicate_claim_cancel_and_resume_preserve_attempts(tmp_path):
         assert (await lab.freeze(study["id"]))["status"] == "selected"
 
     asyncio.run(exercise())
+
+
+def test_formula_gate_is_turn_scoped_and_budget_ignores_historical_studies(tmp_path):
+    from factor_demo.research_models import ResearchReply
+    from factor_demo.review_pipeline import budget_checkpoint
+
+    lab = fixture_case(tmp_path / "case")
+    study = lab.create(FormulaPlan(title="unfinished old comparison", labels=["good", "bad"]))
+    with pytest.raises(ValueError, match="active this turn"):
+        lab.handoff(None)
+    lab.begin_turn()
+    assert lab.catalog() and not lab.active()
+    assert lab.handoff(None) is None
+    assert not json.loads(lab.context_summary())["formula_studies"][0]["required_this_turn"]
+    agent = SimpleNamespace(_formula_lab=lab, _manager=None)
+    assert budget_checkpoint(agent).formula_comparison is None
+    # Read-only access does not reactivate a comparison. Resuming explicitly does.
+    lab.get(study["id"])
+    assert lab.handoff(ResearchReply(summary="这里只解释旧结果").formula_comparison) is None
+    lab.begin(study["id"])
+    assert lab.active()[0]["id"] == study["id"]
+    with pytest.raises(ValueError, match="formula_comparison"):
+        lab.handoff(None)
+    fallback = budget_checkpoint(agent).formula_comparison
+    assert fallback.study_id == study["id"] and fallback.status == "incomplete"
+    assert lab.handoff(fallback)["status"] == "incomplete"
+    # Even without an active study, an explicit selection claim is always verified.
+    lab.begin_turn()
+    with pytest.raises(ValueError, match="stale"):
+        lab.handoff(
+            FormulaHandoff(study_id=study["id"], status="selected", selection_id="invented")
+        )
+    assert FormulaLab(lab.run).handoff(None) is None
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="native CodeAct and actual plotting worker")
+def test_native_plot_only_turn_with_unfinished_historical_formula_study(tmp_path):
+    from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall
+
+    from factor_demo.autoresearch_agent import AutoresearchAgent
+    from factor_demo.research_context import install_research_context
+    from factor_demo.research_workspace import PythonWorkspace
+
+    lab = fixture_case(tmp_path / "case")
+    lab.create(FormulaPlan(title="historical pending work", labels=["good", "bad"]))
+    plotting = "import polars as pl\nimport matplotlib.pyplot as plt\nx=pl.read_parquet('../input/traces/dev-good-0-0.parquet')\nplt.plot(x['time_s'],x['a'])\nplt.savefig('artifacts/simple-plot.png')"
+    code = (
+        "old = await self.read_formula_study()\n"
+        + f"execution = await self.run_code({plotting!r})\n"
+        + "return_result(ResearchReply(summary='本轮只绘制已有传感器曲线，无公式选优。',artifacts=['artifacts/simple-plot.png']))"
+    )
+    response = LLMResponse(
+        parts=(ToolCall(id="plot-only", name="python_cell", arguments=json.dumps({"code": code})),),
+        finish_reason="tool_calls",
+    )
+
+    async def exercise():
+        worker = PythonWorkspace(lab.run)
+        client = FakeLLMClient(scripted_responses=[response], strict_exhaustion=True)
+        agent = AutoresearchAgent(worker, llm=client)
+        try:
+            install_research_context(agent, "只画已有曲线，不做模型比较")
+            reply = await agent.research("只画已有曲线，不做模型比较")
+            assert reply.formula_comparison is None
+            assert agent._last_verification["formula_comparison"] is None
+            assert (worker.work / reply.artifacts[0]).read_bytes().startswith(b"\x89PNG")
+            assert not agent._formula_lab.active()
+            assert agent._formula_lab.catalog()[0]["trials"] == []
+        finally:
+            await agent.aclose()
+            await worker.close()
+
+    asyncio.run(exercise())

@@ -2,10 +2,11 @@
 
 | 检查 | 本次本地结果 |
 |---|---|
-| Python完整回归 | 59 passed，0 failed；保留80条上游弃用/类型提示警告 |
+| Python完整回归 | 61 passed，0 failed；保留80条上游弃用/类型提示警告 |
 | Vue交互回归 | 8 passed，0 failed |
 | TypeScript与Vite | 类型检查与生产构建通过 |
 | 扩展科学库 | aeon/statsmodels纳入显式依赖；真实worker完成DTW、三维归一化、回归、PCA、SciPy找峰、图表保存及JIT缓存检查 |
+| 任务范围回归 | 历史未完成比较不阻塞新轮只画图；读取旧结果不启用门禁，显式继续后要求交接，预算降级不误带历史研究 |
 | 专家公式流程 | 实际worker与原生CodeAct调用通过；三公式+一组合在现有刻蚀公开数据上完成8次模型比较并重算一致，保留NaN失败与修订；不是新的独立诊断 |
 | Ruff | src、tests、scripts检查通过 |
 | Sphinx | nitpicky与warning-as-error严格构建通过 |

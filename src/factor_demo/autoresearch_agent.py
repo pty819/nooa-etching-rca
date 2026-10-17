@@ -124,6 +124,17 @@ class AutoresearchAgent(Agent):
         await self._writable()
         return self._formula_lab.create(plan)
 
+    async def begin_formula_comparison(self, study_id: str) -> dict:
+        """Explicitly resume an existing formula comparison for THIS turn.
+
+        Use when asked to continue comparison or confirm the best formula. It enables
+        the selection/incomplete handoff requirement without changing the saved study.
+        Simply reading results, plotting or ordinary exploration does not need this tool.
+        The requirement resets next turn; historical studies never force new experiments.
+        """
+        await self._writable()
+        return self._formula_lab.begin(study_id)
+
     async def register_formula(self, study_id: str, formula: FormulaSpec) -> dict:
         """Snapshot an arbitrary Python raw-trace operator as an immutable formula version.
 

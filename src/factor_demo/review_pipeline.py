@@ -91,7 +91,7 @@ def budget_checkpoint(agent):
     rows = agent._manager.store.list() if agent._manager else []
     saved = [agent._manager.result(r["id"]) for r in rows if r["state"] == "completed"]
     lab = getattr(agent, "_formula_lab", None)
-    studies = lab.bound() if lab else []
+    studies = lab.active() if lab else []
     from .formula_models import FormulaHandoff
 
     return ResearchReply(

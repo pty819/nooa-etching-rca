@@ -84,6 +84,7 @@ async def research_turn(
         truncation=context_truncation(settings),
     )
     storage.restore_latest_snapshot(agent)
+    agent._formula_lab.begin_turn()
     manager = ResearchManager(
         agent,
         events.root,

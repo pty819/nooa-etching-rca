@@ -15,7 +15,7 @@ const path = (study: FormulaStudy, name: string) => `artifacts/formula-lab/${stu
 
 <template>
   <div class="formula-studies">
-    <p class="files-note">专家的公式、原始数据计算、模型比较与重跑结果在这里保留，可跨轮继续。</p>
+    <p class="files-note">公式研究记录可跨轮继续。普通画图、数据查看和解释任务不要求完成公式比较。</p>
     <div v-if="!studies.length" class="empty-panel">
       <p>还没有公式比较任务。</p>
       <small>可以在对话中提出：从 step 2 的 20% 开始，比较 mean(a × b) 与振动强度，用 Logistic 和树模型评估。</small>

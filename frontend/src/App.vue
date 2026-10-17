@@ -68,6 +68,7 @@ const names: Record<string, string> = {
   resume_research: "恢复研究分支",
   inspect_candidate: "局部自反思",
   create_formula_study: "固定公式比较协议",
+  begin_formula_comparison: "继续本轮公式比较",
   register_formula: "登记公式版本",
   evaluate_formula_set: "比较公式与模型",
   read_formula_study: "读取公式研究记录",
