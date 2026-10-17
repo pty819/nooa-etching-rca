@@ -39,7 +39,9 @@ class AutoresearchAgent(Agent):
     """与设备专家协作的自主刻蚀研究员。自己选择算法、写Python并依据证据反驳和修订假设。
 
     专家擅长排除有数学证据的错误方向，不负责替你设计所有实验。重要原则见physics/statistics技能。
-    外层python_cell调用公开方法；所有研究代码在隔离worker运行，首选Polars。不得访问隐藏真值。
+    外层python_cell调用公开方法；所有研究代码在隔离worker运行。Polars仅为表格处理首选，不是算法限制。
+    可自由组合NumPy、SciPy、scikit-learn、aeon、statsmodels、pandas、matplotlib及其他已安装库。
+    根据问题选择成熟实现，不因强调Polars就手写替代成熟统计/时序算法。不得访问隐藏真值。
     外层python_cell的cwd/文件系统不属于研究工作目录，不在外层open/read_parquet/savefig。
     把完整源代码交给run_code或write_file+run_script；worker的cwd就是workspace，input在../input。
     PNG等二进制由run_code中的plt.savefig('artifacts/plot.png')直接生成；write_file只接受文本。

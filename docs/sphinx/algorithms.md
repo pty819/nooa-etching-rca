@@ -2,7 +2,7 @@
 
 ## 两条实现路径不能混写
 
-**当前主路径**是 `autoresearch`：agent使用通用Python/Polars，自由实现筛选、关系特征、统计检验、OPLS/PCA或原始曲线实验。应用不预置一套保证正确的OPLS求解器，也没有承诺所有自由代码都被独立重算。
+**当前主路径**是 `autoresearch`：agent使用通用Python与完整科学分析栈，自由实现筛选、关系特征、统计检验、OPLS/PCA或原始曲线实验。Polars是表格处理首选，不限制NumPy、SciPy、scikit-learn、aeon、statsmodels或其他已安装库的使用。应用不预置一套保证正确的OPLS求解器，也没有承诺所有自由代码都被独立重算。
 
 **保留的旧回归路径**是 `research/resume/finalize`：`Research`工具只允许raw/difference/ratio/product等因子，训练中位数填补、标准化、逻辑回归，开发集报告balanced accuracy和macro F1，冻结后才用test验收。它用于检查最早feature-only夹具和固定评估器，不能作为当前自由研究已使用的唯一算法。
 

@@ -28,6 +28,11 @@
 
 OPLS/PCA、lot置换与因果边界在本项目中是需要明确实现和验证的统计选择，不因引用一篇自动特征论文就自动正确。旧研究的自写估计器错误及修正见[案例复盘](case-study.md)。
 
+## 科学分析库
+
+- [aeon官方文档](https://www.aeon-toolkit.org/en/stable/)：时序距离、集合变换与学习方法；具体API与可选依赖应按锁定版本检查。
+- [statsmodels官方文档](https://www.statsmodels.org/stable/)：回归、统计推断、诊断与时序方法；统计检验本身不等于设备因果识别。
+
 ## 文档和发布
 
 - [Sphinx严格构建选项](https://www.sphinx-doc.org/en/master/man/sphinx-build.html)：使用nitpicky与fail-on-warning。

@@ -159,6 +159,10 @@ def test_native_hooks_reflexion_and_context_survive_snapshot(tmp_path):
             install_research_context(agent, "inspect candidates")
             assert agent._knowledge_registry.activated() == ["etch.physics", "etch.statistics"]
             result = await agent.inspect_candidate(candidate)
+            # Confirm the actual NOOA model context advertises the broader stack.
+            model_context = str(agent._llm.calls[0].messages)
+            for library in ["NumPy", "SciPy", "scikit-learn", "aeon", "statsmodels"]:
+                assert library in model_context
             assert result["status"] == "budget_exhausted" and len(result["verdicts"]) == 2
             assert not (root / "workspace/research_cells").exists()
             token = reflection_active.set(True)

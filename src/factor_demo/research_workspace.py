@@ -134,6 +134,8 @@ class PythonWorkspace:
             "PATH": f"{Path(sys.executable).parent}:/usr/bin:/bin",
             "TMPDIR": str(cache),
             "MPLCONFIGDIR": str(cache / "mpl"),
+            "NUMBA_CACHE_DIR": str(cache / "numba"),
+            "JOBLIB_TEMP_FOLDER": str(cache / "joblib"),
             "MPLBACKEND": "Agg",
             "PYTHONUNBUFFERED": "1",
             "POLARS_MAX_THREADS": "4",

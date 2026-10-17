@@ -2,9 +2,10 @@
 
 | 检查 | 本次本地结果 |
 |---|---|
-| Python完整回归 | 50 passed，0 failed；保留80条上游弃用/类型提示警告 |
+| Python完整回归 | 51 passed，0 failed；保留80条上游弃用/类型提示警告 |
 | Vue交互回归 | 6 passed，0 failed |
 | TypeScript与Vite | 类型检查与生产构建通过 |
+| 扩展科学库 | aeon/statsmodels纳入显式依赖；真实worker完成DTW、三维归一化、回归、PCA、SciPy找峰、图表保存及JIT缓存检查 |
 | Ruff | src、tests、scripts检查通过 |
 | Sphinx | nitpicky与warning-as-error严格构建通过 |
 | Mermaid | 19张图全部实际渲染为SVG；检查其引用、XML与viewBox |

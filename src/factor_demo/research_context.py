@@ -16,7 +16,9 @@ def install_research_context(agent, task, feedback=None, ledger=None):
     registry.activate(["etch.physics", "etch.statistics"])
     agent._knowledge_registry = registry
     agent.context["case_constraints"] = Context(
-        "固定recipe；分别比较1↔2、2↔3、1↔3；仅公开train/dev。科学方法由你选择，使用Polars及通用Python。",
+        "固定recipe；分别比较1↔2、2↔3、1↔3；仅公开train/dev。科学方法和库由你选择："
+        "Polars用于表格，NumPy/SciPy用于数值/信号，scikit-learn用于建模，aeon用于时序，"
+        "statsmodels用于统计推断；也可使用其他已安装科学库，以上不是库白名单或固定流程。",
         prefix=True,
     )
     agent.context["current_task"] = Context(json.dumps({"task": task}, ensure_ascii=False))

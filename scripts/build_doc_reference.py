@@ -2,6 +2,7 @@
 
 import ast
 import os
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,6 +66,29 @@ def generate():
             "```",
             "",
         ]
+    lock = tomllib.loads((ROOT / "uv.lock").read_text())
+    stack = [
+        "polars",
+        "numpy",
+        "scipy",
+        "scikit-learn",
+        "aeon",
+        "statsmodels",
+        "pandas",
+        "matplotlib",
+    ]
+    lines += [
+        "## 科学分析库的锁定版本",
+        "",
+        "这些版本来自uv.lock，不代表全部算法或可选extras都经过验收。Polars只是表格首选，agent可自由选择、组合其他已安装库。",
+        "",
+        "| 发行包 | 锁定版本 |",
+        "|---|---|",
+    ]
+    for package in stack:
+        versions = sorted({p["version"] for p in lock["package"] if p["name"] == package})
+        lines.append(f"| {package} | {', '.join(versions)} |")
+    lines += ["", f"[依赖约束]({source('pyproject.toml')}) · [完整锁文件]({source('uv.lock')})", ""]
     for filename, wanted in [
         ("runtime.py", {"RuntimeSettings"}),
         ("capabilities.py", {"Capabilities"}),

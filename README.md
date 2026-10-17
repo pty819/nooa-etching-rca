@@ -9,7 +9,7 @@
 ## 系统能力
 
 - 以原始曲线、step边界和量测为输入，分别研究正常、严重异常和维修后残留三个时段；recipe保持一致。
-- 通用 Python/Polars 执行，自主选择统计、时序、OPLS/PCA或其他方法，保留代码、真实输出、失败及修订。
+- 通用 Python 执行，可自由组合 Polars、NumPy、SciPy、scikit-learn、aeon、statsmodels、pandas、matplotlib及其他已安装库；Polars仅为表格首选。自主选择统计、时序、OPLS/PCA或其他方法，保留代码、真实输出、失败及修订。
 - 原生 LoopGuard、Context/TextSkill、证据前后置校验、Predict 审查与有界定向修订、局部只读 Reflexion。
 - 原生 QueueManager/Channel 与独立研究进程、工作区、NOOA存储和恢复组合；默认两个活跃分支。
 - 主/子研究、摘要、审查及正文共用 AdmissionBroker 和持久 token 预算。
