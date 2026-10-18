@@ -36,7 +36,7 @@ uv run factor-demo validate-etch --data data/etching-v3
 uv run factor-demo preview-etch --data data/etching-v3
 ```
 
-生成器拒绝覆盖非空目录；要复现实验应保留seed、sample period和manifest，新数据用新目录。默认命令会生成完整原始曲线、特征、隐藏状态和本地预览，随后只把发现范围导给研究会话。仓库未捆绑生成后的二进制数据。
+生成器拒绝覆盖非空目录；要复现实验应保留seed、sample period和manifest，新数据用新目录。generate-etch生成原始曲线、特征与隐藏状态；validate-etch独立验证，preview-etch单独生成预览。研究会话随后只导出发现范围。仓库未捆绑生成后的二进制数据。
 
 ## 启动前端和CLI研究
 

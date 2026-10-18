@@ -21,7 +21,7 @@
 | 旧入口混淆、错误噪声注释 | legacy显式命名空间；research默认现代流程；注释明确时间相关噪声 | test_research、test_runtime |
 | 开发依赖漏洞、CI只构建文档 | 更新锁定依赖；Linux/macOS pytest和前端测试/构建/审计工作流 | Runtime checks、npm audit |
 
-## 持出评估与对照场景
+## 留出评估与对照场景
 
 默认`balanced_v3`为360片目标片加每lot一片参考腔室数据；每个时段24个lot，各12个train、6个dev、6个test。recipe、指令波形和步骤时长相同。校准和环境扰动在普通场景中按lot独立抽样。旧90片`legacy_v2`仍可显式生成，保留历史案例可复现性，不用于新的强评估承诺。
 
