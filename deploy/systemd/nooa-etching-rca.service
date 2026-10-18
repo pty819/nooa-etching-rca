@@ -6,9 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/src/nooa-etching-rca
+ExecStartPre=%h/src/nooa-etching-rca/.venv/bin/factor-demo doctor --warm-font-cache
 ExecStart=%h/src/nooa-etching-rca/.venv/bin/factor-demo serve --host 127.0.0.1 --port 8765
 Environment=PATH=/usr/bin:/bin
 Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
+Environment=FACTOR_FONT_CACHE_DIR=%S/nooa-etching-rca/fonts
 StateDirectory=nooa-etching-rca
 StateDirectoryMode=0700
 StandardOutput=append:%S/nooa-etching-rca/workbench.log
@@ -18,6 +20,7 @@ Nice=10
 Restart=on-failure
 RestartSec=3
 KillMode=control-group
+TimeoutStartSec=600
 TimeoutStopSec=35
 
 [Install]

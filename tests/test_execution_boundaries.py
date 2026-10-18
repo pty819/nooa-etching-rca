@@ -21,7 +21,9 @@ def test_generated_outer_cell_has_no_host_files_client_or_live_agent(tmp_path):
     root = public_case(tmp_path / "case")
     secret = tmp_path / "outside.txt"
     secret.write_text("DUMMY_NO_REAL_SECRET")
-    code = f"""try:
+    code = f"""assert "run_code" in doc(self, concise=True, inline_depth=0)
+assert "ResearchReply" in doc(ResearchReply, RawEvidenceSpec, concise=True)
+try:
  open({str(secret)!r}).read()
 except (PermissionError, FileNotFoundError):
  pass

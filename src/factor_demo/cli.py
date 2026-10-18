@@ -20,7 +20,8 @@ def main():
         description="NOOA raw-data research and reproducible etching evaluation"
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("doctor")
+    p = sub.add_parser("doctor")
+    p.add_argument("--warm-font-cache", action="store_true")
     p = sub.add_parser("serve")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
@@ -69,9 +70,12 @@ def main():
         p.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "doctor":
-        from .sandboxing import execution_info
+        from .sandboxing import execution_info, prepare_font_cache
 
-        print(json.dumps(execution_info(), indent=2))
+        info = execution_info()
+        if args.warm_font_cache:
+            info.update(prepare_font_cache())
+        print(json.dumps(info, indent=2))
         return
     if args.command == "serve":
         from .web import serve

@@ -76,13 +76,24 @@ def restore_tool(name):
     return getattr(_ACTIVE, name)
 
 
-def safe_doc(value):
-    if isinstance(value, AgentProxy):
-        return "\n".join(name + "\n" + text for name, text in value.tools.items())
-    if isinstance(value, SkillDoc):
-        return value.text
-    if isinstance(value, RemoteTool):
-        return value.__doc__
+def safe_doc(*values, concise=False, inline_depth=1):
+    """Mirror native doc arguments while exposing only the proxy's public surface."""
     from nooa.agentdoc import doc
 
-    return doc(value)
+    rendered = []
+    for value in values:
+        if isinstance(value, AgentProxy):
+            rendered.append(
+                "\n".join(
+                    name + "\n" + (text.splitlines()[0] if concise else text)
+                    for name, text in value.tools.items()
+                )
+            )
+        elif isinstance(value, SkillDoc):
+            rendered.append(value.text.splitlines()[0] if concise else value.text)
+        elif isinstance(value, RemoteTool):
+            text = value.__doc__ or ""
+            rendered.append(text.splitlines()[0] if concise and text else text)
+        else:
+            rendered.append(doc(value, concise=concise, inline_depth=inline_depth))
+    return "\n\n".join(rendered)

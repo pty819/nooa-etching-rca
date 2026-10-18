@@ -22,6 +22,8 @@ def runtime_reads() -> list[Path]:
             sys.base_prefix,
             "/System",
             "/usr",
+            "/etc/fonts",
+            "/var/cache/fontconfig",
             "/bin",
             "/lib",
             "/lib64",
@@ -237,9 +239,68 @@ def launch(python_args, reads, writes):
     raise RuntimeError("No enforced execution backend on this platform")
 
 
+def font_cache_seed():
+    import hashlib
+    from importlib.metadata import version
+
+    explicit = os.environ.get("FACTOR_FONT_CACHE_DIR")
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    identity = hashlib.sha256(str(Path(sys.prefix).resolve()).encode()).hexdigest()[:12]
+    return Path.home() / ".cache/nooa-etching-rca/fonts" / (version("matplotlib") + "-" + identity)
+
+
+def prepare_font_cache():
+    """Deployment-time warmup; no model calls and no mutable cache shared by cells."""
+    cache = font_cache_seed()
+    cache.mkdir(parents=True, exist_ok=True, mode=0o700)
+    prior = os.environ.get("MPLCONFIGDIR")
+    os.environ["MPLCONFIGDIR"] = str(cache)
+    try:
+        from matplotlib import font_manager
+
+        files = sorted(cache.glob("fontlist-v*.json"))
+        return {
+            "font_cache": str(cache),
+            "cache_files": len(files),
+            "fonts": len(font_manager.fontManager.ttflist),
+        }
+    finally:
+        if prior is None:
+            os.environ.pop("MPLCONFIGDIR", None)
+        else:
+            os.environ["MPLCONFIGDIR"] = prior
+
+
+def seed_worker_fonts(cache):
+    import re
+    import shutil
+
+    source = font_cache_seed()
+    if not source.is_dir():
+        return
+    target = cache / "mpl"
+    if target.is_symlink():
+        raise RuntimeError("Worker font cache must not be a symbolic link")
+    target.mkdir(parents=True, exist_ok=True)
+    for path in source.iterdir():
+        if (
+            not re.fullmatch(r"fontlist-v[0-9]+(?:\.[0-9]+)*\.json", path.name)
+            or path.is_symlink()
+            or not path.is_file()
+        ):
+            continue
+        dest = target / path.name
+        if not dest.is_symlink() and not dest.exists() and path.stat().st_size <= 8 * 1024 * 1024:
+            shutil.copyfile(path, dest)
+
+
 def child_environment(work: Path, **extra):
     cache = work / ".cache"
+    if cache.is_symlink():
+        raise RuntimeError("Worker cache must not be a symbolic link")
     cache.mkdir(parents=True, exist_ok=True)
+    seed_worker_fonts(cache)
     environment = {
         "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
         "HOME": str(cache),

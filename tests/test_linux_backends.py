@@ -87,3 +87,50 @@ def test_uv_version_alias_is_preserved_without_mounting_its_parent(tmp_path, mon
     monkeypatch.setattr("sys.executable", str(executable))
     monkeypatch.setattr("sys._base_executable", str(alias / "bin/python3.12"))
     assert sandboxing.interpreter_links([base, venv]) == {alias: str(base)}
+
+
+def test_font_seed_copies_only_cache_json_and_isolates_later_writes(tmp_path, monkeypatch):
+    seed = tmp_path / "font-seed"
+    seed.mkdir()
+    (seed / "fontlist-v400.json").write_text('{"fixture":1}')
+    (seed / "fontlist-v3.11.0.json").write_text('{"versioned":1}')
+    (seed / "unrelated.txt").write_text("do not expose")
+    (seed / "fontlist-v401.json").symlink_to(seed / "unrelated.txt")
+    monkeypatch.setenv("FACTOR_FONT_CACHE_DIR", str(seed))
+    work = tmp_path / "work"
+    work.mkdir()
+    environment = sandboxing.child_environment(work)
+    copied = Path(environment["MPLCONFIGDIR"]) / "fontlist-v400.json"
+    assert copied.read_text() == '{"fixture":1}' and not (copied.parent / "unrelated.txt").exists()
+    assert not (copied.parent / "fontlist-v401.json").exists()
+    assert (copied.parent / "fontlist-v3.11.0.json").read_text() == '{"versioned":1}'
+    copied.write_text('{"cell_override":1}')
+    sandboxing.child_environment(work)
+    assert (
+        copied.read_text() == '{"cell_override":1}'
+        and (seed / "fontlist-v400.json").read_text() == '{"fixture":1}'
+    )
+
+
+def test_font_seed_never_follows_worker_cache_symlinks(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "fontlist-v400.json").write_text("{}")
+    monkeypatch.setenv("FACTOR_FONT_CACHE_DIR", str(seed))
+    work = tmp_path / "work"
+    work.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (work / ".cache").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        sandboxing.child_environment(work)
+    (work / ".cache").unlink()
+    (work / ".cache/mpl").mkdir(parents=True)
+    (work / ".cache/mpl/fontlist-v400.json").symlink_to(outside / "new.json")
+    sandboxing.child_environment(work)
+    assert not (outside / "new.json").exists()
+    (work / ".cache/mpl/fontlist-v400.json").unlink()
+    (work / ".cache/mpl").rmdir()
+    (work / ".cache/mpl").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        sandboxing.child_environment(work)

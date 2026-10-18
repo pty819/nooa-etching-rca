@@ -54,7 +54,7 @@ jobs:
             sudo apparmor_parser -r /etc/apparmor.d/nooa-bwrap
           fi
       - name: Inspect actual execution backend
-        run: uv run --no-sync factor-demo doctor
+        run: uv run --no-sync factor-demo doctor --warm-font-cache
       - name: Lint and format
         run: |
           uv run --no-sync ruff check src tests scripts

@@ -7,10 +7,12 @@
 ```bash
 uname -m
 uv sync --python 3.12 --frozen --group dev
-uv run --no-sync factor-demo doctor
+uv run --no-sync factor-demo doctor --warm-font-cache
 ```
 
 `doctor`显示平台、架构、选中的backend和Landlock ABI。内核版本号不能代替功能检查：实测ARM NAS的7.1.8内核返回Landlock不可用，但已安装的bubblewrap 0.11.1可以正常创建所需命名空间。
+
+`--warm-font-cache`在部署阶段预热Matplotlib字体索引，首次扫描可能较慢。每个cell只复制索引JSON到自己的可写缓存，不能修改部署缓存。Linux只读挂载字体配置与fontconfig缓存；图表生成仍在受限worker内完成。user service自动预热，并为首次启动保留600秒，避免首次绘图把cell的计算时限耗在字体扫描上。
 
 无Landlock时安装发行版的bubblewrap包，例如Debian/Ubuntu的`sudo apt-get install bubblewrap`。`FACTOR_LINUX_BACKEND=auto`为默认值，也可在独立测试进程中显式选择`landlock`或`bubblewrap`。强制选择失败不会自动换成无限制执行；主机限制了用户命名空间时，doctor会报告bubblewrap的实际失败原因。
 
@@ -41,7 +43,7 @@ uv run --no-sync factor-demo generate-etch --data data/etching-v3 --runs 360
 在部署目录配置自己的`.env`或`.secrets/providers.json`。凭据不进入仓库。确认8765端口空闲后，可以安装项目自带的user service：
 
 ```bash
-mkdir -p ~/.config/systemd/user
+mkdir -p ~/.config/systemd/user ~/.local/state/nooa-etching-rca
 cp deploy/systemd/nooa-etching-rca.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now nooa-etching-rca
