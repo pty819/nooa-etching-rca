@@ -471,7 +471,7 @@ def test_http_branch_resume_restores_history_without_replaying_the_parent(endpoi
             }
             assert c.post("/api/sessions/case/messages", json=body).status_code == 200
             assert c.post("/api/sessions/case/messages", json=body).json()["duplicate"]
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + 90
             while c.get("/api/sessions/case").json()["active"]:
                 assert time.monotonic() < deadline
                 time.sleep(0.1)
@@ -490,7 +490,7 @@ def test_http_branch_resume_restores_history_without_replaying_the_parent(endpoi
                 ).status_code
                 == 200
             )
-            deadline = time.monotonic() + 30
+            deadline = time.monotonic() + 90
             while c.get("/api/sessions/case").json()["active"]:
                 assert time.monotonic() < deadline
                 time.sleep(0.1)

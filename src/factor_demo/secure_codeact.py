@@ -17,7 +17,7 @@ from nooa.strategies.codeact import _ReturnResultSignal
 from pydantic import BaseModel, TypeAdapter
 
 from .cell_wire import MAX_FRAME, decode, dumps, encode, loads
-from .sandboxing import child_environment, launch, reap
+from .sandboxing import child_environment, launch, prepare_guard_modules, reap
 
 TOOLS = frozenset(
     [
@@ -82,6 +82,7 @@ class ExternalCell:
         self.root = Path(self.temp.name).resolve()
         self.kit = self.root / "runtime"
         self.kit.mkdir()
+        prepare_guard_modules(self.kit)
         self.work = self.root / "workspace"
         self.work.mkdir()
         for name in ["codeact_child.py", "cell_proxy.py", "cell_wire.py", "sandboxing.py"]:
@@ -213,7 +214,7 @@ class ExternalCell:
                     continue
                 if message.get("kind") != "result":
                     raise ValueError("Invalid cell response")
-                await asyncio.wait_for(process.wait(), 3)
+                await asyncio.wait_for(process.wait(), 10)
                 if process.returncode:
                     raise RuntimeError("External cell did not exit successfully")
                 self.checkpoint = (

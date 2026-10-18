@@ -71,12 +71,12 @@ def test_free_code_persists_and_fails_recoverably_with_real_os_boundaries(tmp_pa
                 "except PermissionError: print('SECRET_DENIED')\n"
                 "else: raise AssertionError('secret became readable')\n"
                 "import os, socket\nassert 'DEMO_PRIVATE_TEST_SECRET' not in os.environ\n"
-                "s=socket.socket()\ntry: s.connect(('127.0.0.1',9))\n"
+                "s=None\ntry:\n s=socket.socket(); s.connect(('127.0.0.1',9))\n"
                 "except PermissionError: print('NETWORK_DENIED')\n"
-                "finally: s.close()"
+                "finally:\n if s is not None: s.close()"
             )
             result = await worker.execute(code)
-            assert result["ok"] and "SECRET_DENIED" in result["output"]
+            assert result["ok"] and "SECRET_DENIED" in result["output"], result["output"]
             assert "NETWORK_DENIED" in result["output"]
             timed = await worker.execute("while True: pass", timeout_s=1)
             assert not timed["ok"] and "timeout" in timed["output"]

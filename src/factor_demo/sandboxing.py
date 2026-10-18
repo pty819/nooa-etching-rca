@@ -90,12 +90,34 @@ def child_environment(work: Path, **extra):
         "JOBLIB_TEMP_FOLDER": str(cache / "joblib"),
         "MPLBACKEND": "Agg",
         "PYTHONUNBUFFERED": "1",
+        "LITELLM_LOCAL_MODEL_COST_MAP": "True",
         "POLARS_MAX_THREADS": "2",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
         "VECLIB_MAXIMUM_THREADS": "1",
         **extra,
     }
+
+
+def prepare_guard_modules(kit: Path):
+    """Copy the pinned, attributed guards without importing the full SDK in children."""
+    import importlib.util
+
+    for module, name in [("config", "_guard_config.py"), ("guards", "_guard_rules.py")]:
+        spec = importlib.util.find_spec("nooa.runtime.sandbox." + module)
+        if spec is None or not spec.origin:
+            raise RuntimeError("Pinned NOOA guard source is unavailable")
+        source = Path(spec.origin).read_text()
+        if module == "guards":
+            original = "from nooa.runtime.sandbox.config import LandlockRule, ResolvedSpec"
+            if source.count(original) != 1:
+                raise RuntimeError(
+                    "Pinned NOOA guard import changed; refuse an unverified bootstrap"
+                )
+            source = source.replace(
+                original, "from _guard_config import LandlockRule, ResolvedSpec"
+            )
+        (kit / name).write_text(source)
 
 
 def install_linux(reads, writes):
@@ -105,8 +127,8 @@ def install_linux(reads, writes):
     import ctypes
     import platform
 
-    from nooa.runtime.sandbox.config import LandlockRule
-    from nooa.runtime.sandbox.guards import apply_landlock, apply_rlimits
+    from _guard_config import LandlockRule
+    from _guard_rules import apply_landlock, apply_rlimits
 
     rules = [
         LandlockRule(str(Path(p).resolve()), required=True)
@@ -119,8 +141,9 @@ def install_linux(reads, writes):
         LandlockRule("/dev/urandom"),
         LandlockRule("/dev/random"),
     ]
-    apply_landlock(tuple(rules))
+    # Resolve the trusted process baseline before /proc becomes inaccessible.
     apply_rlimits(max_memory_mb=2048, max_cpu_seconds=300)
+    apply_landlock(tuple(rules))
     # Deny socket creation (including AF_UNIX), ptrace/process-memory access and
     # signals to other processes. The parent retains authority to reap children.
     arch = platform.machine()

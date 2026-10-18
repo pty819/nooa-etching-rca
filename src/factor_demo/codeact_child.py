@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -103,6 +104,10 @@ async def main():
             pass
     output.write(dumps(message))
     output.flush()
+    # Checkpoint and JSON result are fully flushed. The fresh child owns no
+    # model transport; SDK atexit hooks must not turn a committed cell into a
+    # timeout or trigger the same approved tools again. The host reaps its group.
+    os._exit(0)
 
 
 if __name__ == "__main__":

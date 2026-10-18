@@ -93,3 +93,27 @@ def test_scientific_output_cannot_spoof_control_or_shift_following_cells(tmp_pat
             await worker.close()
 
     asyncio.run(run())
+
+
+def test_outer_cell_commits_without_waiting_for_sdk_shutdown_hooks(tmp_path):
+    root = public_case(tmp_path / "case")
+    code = "import atexit,time\natexit.register(time.sleep,5)\nreturn_result(ResearchReply(summary='committed before shutdown hooks',intent='visualization'))"
+    response = LLMResponse(
+        parts=(ToolCall(id="shutdown", name="python_cell", arguments=json.dumps({"code": code})),),
+        finish_reason="tool_calls",
+    )
+
+    async def run():
+        worker = PythonWorkspace(root)
+        agent = AutoresearchAgent(
+            worker, llm=FakeLLMClient(scripted_responses=[response], strict_exhaustion=True)
+        )
+        install_research_context(agent, "shutdown regression")
+        try:
+            reply = await asyncio.wait_for(agent.research("finish one cell"), 15)
+            assert reply.summary == "committed before shutdown hooks"
+        finally:
+            await worker.close()
+            await agent.aclose()
+
+    asyncio.run(run())

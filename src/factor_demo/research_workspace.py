@@ -128,6 +128,9 @@ class PythonWorkspace:
     async def start(self):
         self.work.mkdir(parents=True, exist_ok=True)
         self.kit.mkdir(parents=True, exist_ok=True)
+        from .sandboxing import prepare_guard_modules
+
+        prepare_guard_modules(self.kit)
         for name in ["research_worker.py", "sandboxing.py"]:
             shutil.copyfile(Path(__file__).with_name(name), self.kit / name)
 

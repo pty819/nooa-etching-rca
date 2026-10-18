@@ -41,7 +41,7 @@ jobs:
       - name: Generate the explicit historical export fixture
         run: uv run --no-sync factor-demo generate-etch --data data/etching-v2 --runs 90 --profile legacy_v2
       - name: Real worker, evidence and orchestration regressions (no provider keys)
-        run: uv run --no-sync pytest -q
+        run: uv run --no-sync pytest -q --durations=15
   frontend:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
