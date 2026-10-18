@@ -170,7 +170,7 @@ def test_branch_worker_cannot_read_sibling_or_parent_even_under_tmp(tmp_path):
             result = await worker.execute(
                 "from pathlib import Path\nimport polars as pl\nprint(pl.read_parquet(DATASET/'runs.parquet').height)\ntry: Path("
                 + repr(str(root / "workspace/artifacts/parent-secret.txt"))
-                + ").read_text()\nexcept PermissionError: print('PARENT_DENIED')\nelse: raise AssertionError('parent became readable')"
+                + ").read_text()\nexcept (PermissionError, FileNotFoundError): print('PARENT_DENIED')\nelse: raise AssertionError('parent became readable')"
             )
             assert result["ok"] and "PARENT_DENIED" in result["output"]
         finally:

@@ -23,7 +23,7 @@ def test_generated_outer_cell_has_no_host_files_client_or_live_agent(tmp_path):
     secret.write_text("DUMMY_NO_REAL_SECRET")
     code = f"""try:
  open({str(secret)!r}).read()
-except PermissionError:
+except (PermissionError, FileNotFoundError):
  pass
 else:
  raise AssertionError('host file became readable')
@@ -82,7 +82,9 @@ def test_scientific_output_cannot_spoof_control_or_shift_following_cells(tmp_pat
             denied = await worker.execute(
                 f"from pathlib import Path\nPath({str(marker)!r}).read_text()"
             )
-            assert not denied["ok"] and "PermissionError" in denied["output"]
+            assert not denied["ok"] and any(
+                name in denied["output"] for name in ["PermissionError", "FileNotFoundError"]
+            )
             oversized = await worker.execute("import os\nos.write(1,b'x'*(17*1024*1024))")
             assert oversized["ok"] and oversized["output_truncated"]
             assert (await worker.execute("print('RECOVERED')"))["output"].strip() == "RECOVERED"

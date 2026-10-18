@@ -19,5 +19,5 @@ flowchart TB
   end
   RPC --> PY
   PY -->|"stdout仅文本 · 实际退出码"| LEDGER
-  RULES["macOS deny-default<br/>Linux Landlock + seccomp<br/>检查点只在子进程加载"] -.-> OUTER
+  RULES["macOS deny-default<br/>Linux Landlock / bubblewrap + seccomp<br/>检查点只在子进程加载"] -.-> OUTER
   RULES -.-> SCIENCE

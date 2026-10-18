@@ -1,0 +1,20 @@
+[Unit]
+Description=NOOA etching research workbench
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/src/nooa-etching-rca
+ExecStart=%h/src/nooa-etching-rca/.venv/bin/factor-demo serve --host 127.0.0.1 --port 8765
+Environment=PATH=/usr/bin:/bin
+Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
+UMask=0077
+Nice=10
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+TimeoutStopSec=35
+
+[Install]
+WantedBy=default.target

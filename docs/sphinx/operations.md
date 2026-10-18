@@ -16,7 +16,7 @@ python3 -m http.server 8877 --directory docs/_build/html
 
 ## 研究环境
 
-当前完整自由研究要求macOS sandbox-exec或Linux Landlock/seccomp、Python3.12/3.13、uv与Node24。先同步运行依赖和前端：
+当前完整自由研究要求macOS sandbox-exec或Linux Landlock/bubblewrap与seccomp、Python3.12/3.13、uv与Node24。先同步运行依赖和前端：
 
 ```bash
 uv sync --python 3.12
@@ -44,7 +44,7 @@ uv run factor-demo preview-etch --data data/etching-v3
 uv run --env-file .env factor-demo serve --host 127.0.0.1 --port 8765
 ```
 
-浏览器新建研究时选择etching-v2与自己的custom模型。也可直接用CLI：
+浏览器新建研究时选择etching-v3与自己的custom模型。也可直接用CLI：
 
 ```bash
 uv run factor-demo autoresearch --data data/etching-v3 \

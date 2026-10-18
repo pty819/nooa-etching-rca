@@ -21,8 +21,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        include:
+          - {os: ubuntu-24.04, backend: auto}
+          - {os: ubuntu-24.04-arm, backend: auto}
+          - {os: ubuntu-24.04, backend: bubblewrap}
+          - {os: macos-15, backend: auto}
+    name: python (${{ matrix.os }}, ${{ matrix.backend }})
     runs-on: ${{ matrix.os }}
+    env:
+      FACTOR_LINUX_BACKEND: ${{ matrix.backend }}
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,6 +44,11 @@ jobs:
           version: '0.11.3'
       - name: Install locked runtime and test dependencies
         run: uv sync --frozen --group dev
+      - name: Install namespace backend for forced fallback coverage
+        if: matrix.backend == 'bubblewrap'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Inspect actual execution backend
+        run: uv run --no-sync factor-demo doctor
       - name: Lint and format
         run: |
           uv run --no-sync ruff check src tests scripts

@@ -201,7 +201,10 @@ def test_feature_worker_cannot_read_case_labels_even_under_temp(tmp_path):
         register(lab, study, "leak", code)
         result = await lab.evaluate(study["id"], ["leak@1"])
         assert result["trials"][0]["status"] == "failed"
-        assert "PermissionError" in result["trials"][0]["error"]
+        assert any(
+            name in result["trials"][0]["error"]
+            for name in ["PermissionError", "FileNotFoundError"]
+        )
 
     asyncio.run(exercise())
 

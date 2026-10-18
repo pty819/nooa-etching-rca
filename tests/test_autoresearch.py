@@ -68,11 +68,11 @@ def test_free_code_persists_and_fails_recoverably_with_real_os_boundaries(tmp_pa
             assert (await worker.execute("print(x.size)"))["output"].strip() == "5"
             code = (
                 f"try:\n Path({str(secret)!r}).read_text()\n"
-                "except PermissionError: print('SECRET_DENIED')\n"
+                "except (PermissionError, FileNotFoundError): print('SECRET_DENIED')\n"
                 "else: raise AssertionError('secret became readable')\n"
                 "import os, socket\nassert 'DEMO_PRIVATE_TEST_SECRET' not in os.environ\n"
                 "s=None\ntry:\n s=socket.socket(); s.connect(('127.0.0.1',9))\n"
-                "except PermissionError: print('NETWORK_DENIED')\n"
+                "except (PermissionError, FileNotFoundError): print('NETWORK_DENIED')\n"
                 "finally:\n if s is not None: s.close()"
             )
             result = await worker.execute(code)

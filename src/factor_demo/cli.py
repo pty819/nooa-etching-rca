@@ -3,11 +3,14 @@
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
 
 def main():
+    # Configure SDK metadata before importing NOOA, including serve/research paths.
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
     if len(sys.argv) > 1 and sys.argv[1] == "legacy":
         from .legacy.cli import main as legacy_main
 
@@ -17,6 +20,7 @@ def main():
         description="NOOA raw-data research and reproducible etching evaluation"
     )
     sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("doctor")
     p = sub.add_parser("serve")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8765)
@@ -64,6 +68,11 @@ def main():
         p = sub.add_parser(name, aliases=aliases)
         p.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()
+    if args.command == "doctor":
+        from .sandboxing import execution_info
+
+        print(json.dumps(execution_info(), indent=2))
+        return
     if args.command == "serve":
         from .web import serve
 

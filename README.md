@@ -24,7 +24,7 @@
 
 ## 运行要求与复现
 
-自由代码执行使用 **macOS sandbox-exec或支持Landlock/seccomp的Linux，Python3.12/3.13、uv和Node24**。缺少受限执行机制时拒绝执行。Linux/macOS运行回归由独立Runtime checks工作流检查；文档构建不替代运行验收。
+自由代码执行使用 **macOS sandbox-exec或Linux（Landlock／bubblewrap＋seccomp），Python3.12/3.13、uv和Node24**。缺少受限执行机制时拒绝执行。Linux/macOS运行回归由独立Runtime checks工作流检查；文档构建不替代运行验收。
 
 ```bash
 uv sync --python 3.12
@@ -37,6 +37,8 @@ uv run --env-file .env factor-demo serve --host 127.0.0.1 --port 8765
 ```
 
 打开 <http://127.0.0.1:8765>，创建研究并选择custom provider。生成器拒绝覆盖已有数据。CLI及单分支恢复说明见[操作指南](docs/sphinx/operations.md)。
+
+ARM64与未启用Landlock的Linux部署见[Linux部署指南](docs/sphinx/linux-arm.md)，可用 `factor-demo doctor` 查看实际执行后端。
 
 ## 构建Sphinx文档
 

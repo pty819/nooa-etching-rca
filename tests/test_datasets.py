@@ -132,7 +132,7 @@ def test_selected_worker_scope_is_readonly_and_does_not_fall_back_to_main(tmp_pa
         worker.dataset_session = s
         try:
             result = await worker.execute(
-                "import polars as pl\nprint(DATASET_ID,pl.read_parquet(DATASET/'runs.parquet').height)\nfrom pathlib import Path\ntry: Path('../input/runs.parquet').read_bytes()\nexcept PermissionError: print('MAIN_DENIED')\ntry: (DATASET/'runs.parquet').write_bytes(b'bad')\nexcept PermissionError: print('WRITE_DENIED')"
+                "import polars as pl\nprint(DATASET_ID,pl.read_parquet(DATASET/'runs.parquet').height)\nfrom pathlib import Path\ntry: Path('../input/runs.parquet').read_bytes()\nexcept (PermissionError, FileNotFoundError): print('MAIN_DENIED')\ntry: (DATASET/'runs.parquet').write_bytes(b'bad')\nexcept OSError as error:\n assert error.errno in (1,13,30)\n print('WRITE_DENIED')"
             )
             assert (
                 result["ok"]

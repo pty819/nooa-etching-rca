@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import sys
+from functools import lru_cache
 from pathlib import Path
 
 
@@ -22,6 +23,8 @@ def runtime_reads() -> list[Path]:
             "/System",
             "/usr",
             "/bin",
+            "/lib",
+            "/lib64",
             "/sbin",
             "/Library/Apple",
             "/Library/Fonts",
@@ -43,6 +46,158 @@ def runtime_reads() -> list[Path]:
     for candidate in candidates:
         grant(candidate)
     return sorted(result)
+
+
+def landlock_abi():
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    return max(0, int(libc.syscall(444, 0, 0, 1)))
+
+
+@lru_cache(maxsize=1)
+def linux_backend():
+    """Select an enforced filesystem backend; never substitute unrestricted execution."""
+    import shutil
+    import subprocess
+
+    requested = os.environ.get("FACTOR_LINUX_BACKEND", "auto")
+    if requested not in {"auto", "landlock", "bubblewrap"}:
+        raise RuntimeError("FACTOR_LINUX_BACKEND must be auto, landlock or bubblewrap")
+    abi = landlock_abi()
+    if requested != "bubblewrap" and abi >= 1:
+        return "landlock"
+    if requested == "landlock":
+        raise RuntimeError("This kernel does not provide Landlock; select bubblewrap or auto")
+    binary = shutil.which("bwrap")
+    if binary:
+        probe = subprocess.run(
+            [
+                binary,
+                "--unshare-all",
+                "--die-with-parent",
+                "--ro-bind",
+                "/",
+                "/",
+                "--proc",
+                "/proc",
+                "--dev",
+                "/dev",
+                "/usr/bin/true",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return "bubblewrap"
+        reason = probe.stderr.strip()[:500]
+    else:
+        reason = "bubblewrap is not installed"
+    raise RuntimeError("No enforced Linux filesystem backend: Landlock unavailable; " + reason)
+
+
+def execution_info():
+    import platform
+
+    mode = (
+        linux_backend()
+        if sys.platform.startswith("linux")
+        else "sandbox-exec"
+        if sys.platform == "darwin"
+        else "unsupported"
+    )
+    return {
+        "platform": sys.platform,
+        "architecture": platform.machine(),
+        "backend": mode,
+        "landlock_abi": landlock_abi() if sys.platform.startswith("linux") else None,
+    }
+
+
+def interpreter_links(allowed):
+    """Preserve version aliases used by venv interpreter symlinks (not extra mounts)."""
+    pending = [Path(sys.executable), Path(getattr(sys, "_base_executable", sys.executable))]
+    seen, links = set(), {}
+    while pending:
+        path = pending.pop()
+        for item in [path, *path.parents]:
+            if item in seen:
+                continue
+            seen.add(item)
+            if not item.is_symlink():
+                continue
+            target = Path(os.readlink(item))
+            literal = target if target.is_absolute() else item.parent / target
+            pending.append(literal)
+            if not any(item == root or item.is_relative_to(root) for root in allowed):
+                links[item] = os.readlink(item)
+    return links
+
+
+def bubblewrap_command(python_args, reads, writes):
+    import shutil
+
+    binary = shutil.which("bwrap")
+    if not binary:
+        raise RuntimeError("Selected bubblewrap executable disappeared")
+    kit = Path(python_args[0]).resolve().parent
+    marker = kit / "_mount_root.txt"
+    if not marker.is_file():
+        raise RuntimeError("Missing trusted mount bootstrap marker")
+    command = [
+        binary,
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--cap-drop",
+        "ALL",
+        "--tmpfs",
+        "/",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+    ]
+    # ELF interpreters use literal /lib or /lib64 paths even on usr-merged
+    # distributions; binding only their resolved targets is insufficient.
+    for alias in [Path("/lib"), Path("/lib64"), Path("/bin"), Path("/sbin")]:
+        if alias.is_symlink():
+            command.extend(["--symlink", os.readlink(alias), str(alias)])
+    extras = [Path(p) for p in ["/etc/ld.so.cache", "/etc/localtime"] if Path(p).exists()]
+    allowed = sorted(
+        {*runtime_reads(), *(Path(p).resolve() for p in reads), *extras},
+        key=lambda p: (len(p.parts), str(p)),
+    )
+    for path in allowed:
+        if path == Path("/"):
+            raise RuntimeError("A cell cannot receive the whole host root")
+        command.extend(["--ro-bind", str(path), str(path)])
+    for alias, target in interpreter_links(allowed).items():
+        command.extend(["--symlink", target, str(alias)])
+    for path in writes:
+        path = Path(path).resolve()
+        command.extend(["--bind", str(path), str(path)])
+    command.extend(
+        [
+            "--ro-bind",
+            str(marker),
+            "/.nooa-cell-backend",
+            "--chdir",
+            str(Path(writes[0]).resolve()),
+            "--remount-ro",
+            "/proc",
+            "--remount-ro",
+            "/",
+            "--",
+            sys.executable,
+            "-I",
+            "-u",
+            *map(str, python_args),
+        ]
+    )
+    return command
 
 
 def mac_profile(reads, writes):
@@ -74,6 +229,8 @@ def launch(python_args, reads, writes):
             *map(str, python_args),
         ]
     if sys.platform.startswith("linux"):
+        if linux_backend() == "bubblewrap":
+            return bubblewrap_command(python_args, reads, writes)
         return [sys.executable, "-I", "-u", *map(str, python_args)]
     raise RuntimeError("No enforced execution backend on this platform")
 
@@ -81,7 +238,7 @@ def launch(python_args, reads, writes):
 def child_environment(work: Path, **extra):
     cache = work / ".cache"
     cache.mkdir(parents=True, exist_ok=True)
-    return {
+    environment = {
         "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
         "HOME": str(cache),
         "TMPDIR": str(cache),
@@ -97,12 +254,16 @@ def child_environment(work: Path, **extra):
         "VECLIB_MAXIMUM_THREADS": "1",
         **extra,
     }
+    if sys.platform.startswith("linux"):
+        environment["NOOA_CELL_BACKEND"] = linux_backend()
+    return environment
 
 
 def prepare_guard_modules(kit: Path):
     """Copy the pinned, attributed guards without importing the full SDK in children."""
     import importlib.util
 
+    (kit / "_mount_root.txt").write_text("nooa-private-mount-root-v1")
     for module, name in [("config", "_guard_config.py"), ("guards", "_guard_rules.py")]:
         spec = importlib.util.find_spec("nooa.runtime.sandbox." + module)
         if spec is None or not spec.origin:
@@ -143,7 +304,19 @@ def install_linux(reads, writes):
     ]
     # Resolve the trusted process baseline before /proc becomes inaccessible.
     apply_rlimits(max_memory_mb=2048, max_cpu_seconds=300)
-    apply_landlock(tuple(rules))
+    mode = os.environ.get("NOOA_CELL_BACKEND", "landlock")
+    if mode == "landlock":
+        apply_landlock(tuple(rules))
+    elif mode == "bubblewrap":
+        marker = Path("/.nooa-cell-backend")
+        if not marker.is_file() or marker.read_text() != "nooa-private-mount-root-v1":
+            raise RuntimeError("Bubblewrap backend was requested outside its trusted mount root")
+        import stat
+
+        if not os.statvfs("/").f_flag & getattr(stat, "ST_RDONLY", 1):
+            raise RuntimeError("Bubblewrap root must be read-only")
+    else:
+        raise RuntimeError("Unknown cell execution backend")
     # Deny socket creation (including AF_UNIX), ptrace/process-memory access and
     # signals to other processes. The parent retains authority to reap children.
     arch = platform.machine()
