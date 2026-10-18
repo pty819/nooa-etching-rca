@@ -117,3 +117,30 @@ def test_truth_score_distinguishes_missing_mechanism_and_false_positive_on_contr
         truth_score({"hypotheses": []}, {"expected_mechanisms": []})["supported_mechanisms"]["f1"]
         == 1
     )
+
+
+def test_surface_reference_keeps_residual_change_across_cohort_sizes(tmp_path):
+    from dataclasses import asdict
+
+    from factor_demo.etch_recipe import Hardware
+    from factor_demo.evaluation import _truth
+
+    private = tmp_path / "truth.private"
+    private.mkdir()
+    for size in [1, 3, 5, 30]:
+        rows = []
+        hardware = []
+        for label, value in [("label1", 1.0), ("label3", 1.2)]:
+            for i in range(size):
+                identity = f"{label}-{i}"
+                rows.append({"run_id": identity, "label": label, "is_control": False})
+                hardware.append(
+                    {
+                        "run_id": identity,
+                        "parameters": asdict(Hardware(wall_recombination_factor=value)),
+                    }
+                )
+        (private / "hardware.json").write_text(json.dumps(hardware))
+        assert _truth(tmp_path, pl.DataFrame(rows))["expected_by_pair"]["label1|label3"] == [
+            "surface_condition"
+        ]

@@ -29,7 +29,7 @@ MECHANISMS = {
     "backside_he_leak": ("edge_leak_sccm_per_torr", 0.1, ["he_edge_"], [4, 8]),
     "wafer_esc_contact": ("edge_contact_factor", 0.1, ["heater_z", "he_edge_"], [4, 8]),
     "pump_restriction": ("pump_conductance_factor", 0.05, ["chamber_pressure", "pcv_"], [4, 8]),
-    "surface_condition": ("wall_recombination_factor", 0.2, ["oes_", "rf_source_"], [4, 8]),
+    "surface_condition": ("wall_recombination_factor", 0.1, ["oes_", "rf_source_"], [4, 8]),
     "edge_ring": ("edge_ring_recession_mm", 0.1, ["rf_bias_", "oes_"], [4, 8]),
 }
 
