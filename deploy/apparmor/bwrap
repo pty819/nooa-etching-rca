@@ -1,0 +1,8 @@
+# Ubuntu's executable-specific user namespace permission for bubblewrap.
+# Mount/PID/network isolation and the cell seccomp policy remain enforced.
+abi <abi/4.0>,
+include <tunables/global>
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+  include if exists <local/bwrap>
+}

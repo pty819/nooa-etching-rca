@@ -9,6 +9,10 @@ WorkingDirectory=%h/src/nooa-etching-rca
 ExecStart=%h/src/nooa-etching-rca/.venv/bin/factor-demo serve --host 127.0.0.1 --port 8765
 Environment=PATH=/usr/bin:/bin
 Environment=LITELLM_LOCAL_MODEL_COST_MAP=True
+StateDirectory=nooa-etching-rca
+StateDirectoryMode=0700
+StandardOutput=append:%S/nooa-etching-rca/workbench.log
+StandardError=inherit
 UMask=0077
 Nice=10
 Restart=on-failure

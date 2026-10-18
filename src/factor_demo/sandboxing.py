@@ -95,7 +95,9 @@ def linux_backend():
         reason = probe.stderr.strip()[:500]
     else:
         reason = "bubblewrap is not installed"
-    raise RuntimeError("No enforced Linux filesystem backend: Landlock unavailable; " + reason)
+    raise RuntimeError(
+        f"No enforced Linux filesystem backend for {requested} (Landlock ABI {abi}): {reason}"
+    )
 
 
 def execution_info():

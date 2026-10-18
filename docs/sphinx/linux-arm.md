@@ -14,6 +14,8 @@ uv run --no-sync factor-demo doctor
 
 无Landlock时安装发行版的bubblewrap包，例如Debian/Ubuntu的`sudo apt-get install bubblewrap`。`FACTOR_LINUX_BACKEND=auto`为默认值，也可在独立测试进程中显式选择`landlock`或`bubblewrap`。强制选择失败不会自动换成无限制执行；主机限制了用户命名空间时，doctor会报告bubblewrap的实际失败原因。
 
+Ubuntu的AppArmor可能还需要为`/usr/bin/bwrap`授予创建用户命名空间的权限，表现为`Failed RTM_NEWADDR: Operation not permitted`。项目提供`deploy/apparmor/bwrap`，语法依据[Ubuntu官方说明](https://documentation.ubuntu.com/release-notes/23.10/)。这是针对bubblewrap可执行文件的权限规则，cell的挂载、PID、网络和seccomp约束仍保留；不是关闭AppArmor或修改全局sysctl。强制后端CI仅在其临时runner安装此规则；NAS实测环境不需要修改系统策略。
+
 ## bubblewrap后端的具体行为
 
 每个cell创建独立的空根目录。只挂载解释器、依赖、只读bootstrap、当前选中数据版本和本方向工作区；不将宿主根目录整体交给研究代码。`/lib`、`/lib64`等标准符号链接保留，保证usr-merge发行版的ELF解释器可运行。根目录和输入只读，持久写入限定在工作区，设备和proc为私有运行时视图。
@@ -46,7 +48,7 @@ systemctl --user enable --now nooa-etching-rca
 systemctl --user status nooa-etching-rca
 ```
 
-该unit使用`~/src/nooa-etching-rca`，默认仅监听服务器本机8765。工作目录不同应修改unit；不要移动或重启同机其他项目。若使用`.env`，在unit中显式添加`EnvironmentFile`并重新加载；私有provider JSON由项目直接读取。
+该unit将进程日志写入用户state目录的`nooa-etching-rca/workbench.log`，便于没有user journal的NAS查看。它使用`~/src/nooa-etching-rca`，默认仅监听服务器本机8765。工作目录不同应修改unit；不要移动或重启同机其他项目。若使用`.env`，在unit中显式添加`EnvironmentFile`并重新加载；私有provider JSON由项目直接读取。
 
 从开发机浏览时可以用SSH转发，不需要改动本地现有8765服务：
 
