@@ -27,7 +27,7 @@
 | test_scientific_stack.py | 实际隔离worker里计算SciPy峰值、sklearn PCA、statsmodels回归、aeon DTW与三维归一化；验证JIT缓存和真实图表落盘 |
 | frontend/tests/workspace.test.ts | Vue消息、Unicode重放、身份隔离、指导、审查、预算和图片路径 |
 
-集成测试使用确定性模型服务，但运行真实SDK、HTTP与科学worker/子进程，不能称为“只有mock函数”。同样，它们也不是对真实GLM的随机输出质量保证。Linux不具备当前macOS执行后端，不能把文档CI通过解释为完整研究系统已在Linux验收。
+集成测试使用确定性模型服务，但运行真实SDK、HTTP与科学worker/子进程，不能称为“只有mock函数”。同样，它们也不是对真实GLM的随机输出质量保证。Linux已有Landlock/seccomp后端；必须以Runtime checks的实际Linux测试为准，不能把文档CI通过解释为运行验收。
 
 扩展分析库后的回归还检查实际NOOA请求上下文包含这些科学库，避免只是把库装在宿主上却没有告诉agent。库栈测试验证代表性计算可执行，不声称所有可选extras和算法都已经验收。
 

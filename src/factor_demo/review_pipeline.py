@@ -8,9 +8,9 @@ from nooa.unifiedllm.admission import AdmissionCallCapError
 from .artifact_store import snapshot_file, snapshot_tree
 from .budget import BudgetExceeded
 from .evidence import EvidenceVerifier
+from .io_utils import write_json
 from .live_events import public_artifact_path
 from .research_models import ResearchReply, ReviewIssue, ReviewResult
-from .synthetic import write_json
 
 
 def freeze_revision(run: Path, folder: Path, report: ResearchReply, verification: dict):
@@ -112,7 +112,7 @@ def budget_checkpoint(agent):
     )
 
 
-async def research_with_review(agent, message, folder, policy, budget_client=None):
+async def research_with_review(agent, message, folder, policy, budget_client=None, reviewer=None):
     events = agent._workspace.events
     run = agent._workspace.run
     from .strategy_factory import research_strategy
@@ -162,18 +162,21 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
             write_json(revision / "outcome.json", outcome)
             events.emit("review.end", **outcome)
             return report, outcome
-        if not policy.review_enabled:
+        if not policy.review_enabled or reviewer is None:
             outcome = {
                 "status": "not_reviewed",
                 "revision": attempt,
                 "verification": verified,
                 "review": None,
+                "reason": "review_disabled"
+                if not policy.review_enabled
+                else "review_provider_unavailable",
             }
             write_json(revision / "outcome.json", outcome)
             return report, outcome
         events.emit("review.start", revision=attempt)
         try:
-            raw = await agent.review(review_bundle(report, verified, events))
+            raw = await reviewer.review(review_bundle(report, verified, events))
             write_json(revision / "review.json", raw.model_dump())
             last_review = validate_review(raw, report)
             if last_review is not raw:
@@ -185,14 +188,24 @@ async def research_with_review(agent, message, folder, policy, budget_client=Non
                     "invalid_review": raw.model_dump(),
                     "instruction": "仅修复你的审查引用，使用allowed_claim_ids中单个ID；不要要求研究者修正文中正常的多ID列举。",
                 }
-                raw = await agent.review(bundle)
+                raw = await reviewer.review(bundle)
                 write_json(revision / "review_repaired.json", raw.model_dump())
                 last_review = validate_review(raw, report)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - untrusted execution/service boundary
             if not isinstance(error, (BudgetExceeded, AdmissionCallCapError)) and not getattr(
                 budget_client, "budget_exhausted", False
             ):
-                raise
+                outcome = {
+                    "status": "not_reviewed",
+                    "revision": attempt,
+                    "verification": verified,
+                    "review": None,
+                    "reason": "review_service_error",
+                    "error_type": type(error).__name__,
+                }
+                write_json(revision / "outcome.json", outcome)
+                events.emit("review.end", **outcome)
+                return report, outcome
             outcome = {
                 "status": "budget_exhausted",
                 "revision": attempt,

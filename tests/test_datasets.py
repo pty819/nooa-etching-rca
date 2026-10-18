@@ -186,7 +186,23 @@ def test_dataset_evidence_uses_explicit_child_scope_and_registered_supplement(tm
     main_ids = pl.read_parquet(s.path(root["id"]) / "runs.parquet")["run_id"].to_list()
     child_ids = set(pl.read_parquet(s.path(a["id"]) / "runs.parquet")["run_id"])
     outsider = next(i for i in main_ids if i not in child_ids)
-    (lab.run / "workspace/artifacts/value.csv").write_text("run_id,value\n" + outsider + ",3\n")
+    s.select(root["id"])
+
+    async def produce():
+        worker = PythonWorkspace(lab.run)
+        worker.dataset_session = s
+        try:
+            result = await worker.execute(
+                "from pathlib import Path\nPath('artifacts/value.csv').write_text("
+                + repr("run_id,value\n" + outsider + ",3\n")
+                + ")"
+            )
+            assert result["ok"]
+        finally:
+            await worker.close()
+
+    asyncio.run(produce())
+    s.select(a["id"])
     ref = EvidenceRef(
         id="e",
         claim="saved value",
@@ -218,7 +234,7 @@ def test_supplied_csv_api_scope_switch_and_old_versions_survive(tmp_path):
     async def exercise():
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://test",
+            base_url="http://localhost",
             headers={"X-Research-Client": "1"},
         ) as client:
             config = (await client.get("/api/config")).json()

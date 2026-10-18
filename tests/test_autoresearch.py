@@ -12,7 +12,9 @@ from factor_demo.research_workspace import PythonWorkspace, prepare_workspace
 from factor_demo.runtime import RuntimeSettings, build_client
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS worker policy")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="enforced execution backend required"
+)
 def test_free_code_persists_and_fails_recoverably_with_real_os_boundaries(tmp_path, monkeypatch):
     run = tmp_path / "run"
     work = run / "workspace"

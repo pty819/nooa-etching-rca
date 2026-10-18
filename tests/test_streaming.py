@@ -108,7 +108,9 @@ def test_reply_commit_table_image_confined_and_replayable(tmp_path):
     resumed.close()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS executor")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="enforced execution backend required"
+)
 def test_code_and_subprocess_outputs_arrive_before_cell_finishes(tmp_path):
     run = run_dir(tmp_path)
     events = LiveEvents(run, "task")
@@ -259,7 +261,9 @@ def test_http_sse_reconnect_idempotency_steering_and_stop(tmp_path):
         thread.join(timeout=8)
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS executor")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="enforced execution backend required"
+)
 def test_cancel_keeps_partial_output_and_resets_worker(tmp_path):
     run = run_dir(tmp_path)
     events = LiveEvents(run, "cancel")

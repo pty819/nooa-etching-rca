@@ -17,23 +17,25 @@ import psutil
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .autoresearch import render_reply
 from .dataset_models import DatasetSchema
+from .io_utils import write_json
 from .live_events import LiveEvents, branch_path, public_artifact_index, public_artifact_path
 from .research_branches import BranchStore
 from .research_workspace import prepare_workspace
-from .synthetic import write_json
 
 
 class NewSession(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str = Field(default="腔室匹配研究", max_length=80)
-    dataset: str = "etching-v2"
+    dataset: str = "etching-v3"
     data_schema: DatasetSchema | None = None
 
 
 class NewMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     message: str = Field(min_length=1, max_length=30000)
     agent_id: str = Field(default="main", pattern=r"^[a-zA-Z0-9_-]{1,80}$")
     provider: str = "glm"
@@ -104,6 +106,15 @@ def create_app(project: Path | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def local_guard(request: Request, call_next):
+        hosts = request.headers.getlist("host")
+        if len(hosts) != 1 or not re.fullmatch(
+            r"(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]{1,5})?", hosts[0], re.IGNORECASE
+        ):
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                {"detail": "Use the configured local application address"}, status_code=400
+            )
         if request.method in {"POST", "DELETE", "PUT", "PATCH"}:
             if request.headers.get("x-research-client") != "1":
                 from fastapi.responses import JSONResponse
@@ -130,6 +141,8 @@ def create_app(project: Path | None = None) -> FastAPI:
             raise HTTPException(404, "Session not found")
         return path
 
+    from .case_lease import case_running
+
     def info(run):
         ui = json.loads((run / "ui.json").read_text()) if (run / "ui.json").exists() else {}
         cfg = json.loads((run / "session.json").read_text())
@@ -137,7 +150,7 @@ def create_app(project: Path | None = None) -> FastAPI:
         return {
             "id": run.name,
             "title": ui.get("title", run.name),
-            "active": bool(job),
+            "active": bool(job) or case_running(run),
             "task_id": job["id"] if job else None,
             "active_agent_id": job.get("agent_id", "main") if job else "main",
             "targets": cfg["discovery_target_runs"],
@@ -173,6 +186,26 @@ def create_app(project: Path | None = None) -> FastAPI:
             .model_dump(),
             "datasets": available_inputs(project),
         }
+
+    @app.get("/api/sessions/{name}/evaluation")
+    async def evaluation(name):
+        from .evaluation import evaluation_state
+
+        return evaluation_state(session(name))
+
+    @app.post("/api/sessions/{name}/evaluation")
+    async def finalize(name):
+        from .evaluation import finalize_evaluation
+
+        run = session(name)
+        if name in jobs:
+            raise HTTPException(
+                409, "Finish the current research turn before freezing its evaluation"
+            )
+        try:
+            return await finalize_evaluation(run)
+        except (ValueError, OSError) as error:
+            raise HTTPException(400, str(error)) from None
 
     @app.get("/api/sessions")
     async def sessions():
@@ -241,8 +274,10 @@ def create_app(project: Path | None = None) -> FastAPI:
         events.close()
         from .dataset_api import dataset_state
 
-        try: data_state=await asyncio.to_thread(dataset_state,run)
-        except (ValueError,OSError): data_state=None  # Historical transcript-only sessions remain readable.
+        try:
+            data_state = await asyncio.to_thread(dataset_state, run)
+        except (ValueError, OSError):
+            data_state = None  # Historical transcript-only sessions remain readable.
 
         return {
             **info(run),
@@ -426,6 +461,11 @@ def create_app(project: Path | None = None) -> FastAPI:
                 if old:
                     return {"task_id": old[0], "duplicate": True}
                 job = jobs.get(name)
+                if not job and case_running(run):
+                    raise HTTPException(
+                        409,
+                        "This case is active in the CLI; wait for that turn before starting another",
+                    )
                 if job and body.agent_id == "main" and job.get("agent_id", "main") != "main":
                     raise HTTPException(
                         409, "A saved branch is running; select that branch for guidance"

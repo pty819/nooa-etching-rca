@@ -19,6 +19,8 @@ class Capabilities(BaseModel):
     max_branches_per_turn: int = Field(default=8, ge=1, le=32)
     max_model_in_flight: int = Field(default=2, ge=1, le=16)
     max_model_calls: int = Field(default=256, ge=1)
+    max_research_iterations: int = Field(default=64, ge=1, le=1024)
+    wait_no_progress_s: int = Field(default=600, ge=5, le=7200)
     max_total_tokens: int = Field(default=4_000_000, ge=1000)
     branch_timeout_s: int = Field(default=1800, ge=10, le=7200)
 

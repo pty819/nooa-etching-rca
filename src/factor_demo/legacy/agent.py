@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 from nooa import Agent, hidden, strategy
-from pydantic import BaseModel
+
+from .models import Conclusion
 
 with hidden:
     from nooa.config.strategy_config import CodeActConfig
-    from nooa.strategies import CodeActV2
 
-
-class Conclusion(BaseModel):
-    selected_experiment_id: str
-    summary: str
-    limitations: list[str]
+    from ..secure_codeact import SecureCodeActV2 as CodeActV2
 
 
 class FactorResearchAgent(Agent):
@@ -65,8 +61,13 @@ class FactorResearchAgent(Agent):
         """Save a short finding with experiment IDs and remaining uncertainties."""
         return self._research.finding(text)
 
-    @strategy(CodeActV2(config=CodeActConfig(max_iterations=22, max_retries=1,
-              max_consecutive_text_only=2, cell_timeout=60)))
+    @strategy(
+        CodeActV2(
+            config=CodeActConfig(
+                max_iterations=22, max_retries=1, execution_backend="sandbox", cell_timeout=60
+            )
+        )
+    )
     async def research(self, objective: str) -> Conclusion:
         """Autonomously research useful, simple factors for the stated objective.
 

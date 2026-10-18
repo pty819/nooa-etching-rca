@@ -17,8 +17,8 @@ from pathlib import Path
 import psutil
 from nooa import QueueManager
 
+from .io_utils import write_json
 from .live_events import LiveEvents, artifact_index, branch_path, public_artifact_path
-from .synthetic import write_json
 
 TERMINAL = {"completed", "cancelled", "failed", "interrupted"}
 
@@ -345,7 +345,17 @@ class ResearchManager:
                         process_created=psutil.Process(proc.pid).create_time(),
                     )
                     self.events.emit("branch.state", branch=self.store.get(identity))
-                    code = await proc.wait()
+                    waiter = asyncio.create_task(proc.wait())
+                    while not waiter.done():
+                        _progress, last = self.progress(identity)
+                        if (
+                            time.time() - max(last, self.store.get(identity)["updated"])
+                            > self.policy.wait_no_progress_s
+                        ):
+                            await self._stop_process(identity, proc)
+                            raise TimeoutError("Branch made no observable progress")
+                        await asyncio.wait({waiter}, timeout=1)
+                    code = await waiter
                 status = (
                     json.loads((run / "status.json").read_text())
                     if (run / "status.json").exists()
@@ -442,6 +452,14 @@ class ResearchManager:
                 ]
         return value
 
+    def progress(self, identity):
+        with sqlite3.connect(self.root / "ui.sqlite") as db:
+            row = db.execute(
+                "SELECT COALESCE(MAX(id),0),COALESCE(MAX(created),0) FROM events WHERE agent_id=? AND task_id=? AND type IN ('model.reasoning.delta','model.content.delta','tool.output','tool.end','turn.checkpoint')",
+                (identity, self.mission),
+            ).fetchone()
+        return row
+
     async def wait(self, identities=None, timeout_s=30):
         identities = identities or list(self.handles)
         for identity in identities:
@@ -461,12 +479,8 @@ class ResearchManager:
         except TimeoutError:
             pass
         results = [self.result(i) for i in identities]
-        if any(r["state"] not in TERMINAL for r in results):
-            # A changing observation timestamp prevents legitimate long waits from
-            # looking like identical failed tool calls. It is never scientific progress.
-            for row in results:
-                row["observed_at"] = time.time()
-                row["observation_note"] = "Query time only; branch state may be unchanged"
+        for row in results:
+            row["progress_revision"] = self.progress(row["agent_id"])[0]
         return results
 
     def guide(self, identity, message):

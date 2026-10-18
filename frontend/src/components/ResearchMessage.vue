@@ -26,6 +26,8 @@ const long = computed(
             ? "正在回复"
             : msg.publication === "final"
               ? "最终交接"
+              : msg.publication === "checkpoint"
+                ? "受限检查点 · 结论待复核"
               : msg.publication === "progress"
                 ? "研究进度 · 待审查"
                 : "研究消息"

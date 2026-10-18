@@ -18,3 +18,7 @@ description: 统计验证和闭环证据审查规则
     - evaluate_formula_set(study_id,["name@1",...])把每个单公式及有意义组合与所有固定模型比较；预处理由程序在fold内拟合。所有登记单公式默认需比较，失败保留，确实不适用时retire_formula_set并给科学理由。不能为抬高分数排除有效候选。
     - 完成比较后freeze_formula_selection会从原始数据重算最佳公式及模型，核对预测和分数；新公式版本使旧选择失效。ResearchReply.formula_comparison=FormulaHandoff(study_id=...,status="selected",selection_id=...)。没完成必须status="incomplete"+reason，不能省略。
     - 报告解释最佳公式具体传感器/step/时间窗、物理意义、失败方法和反证。最高仅指本次候选在固定开发集上的最高，不代表普遍最优、独立测试表现或因果根因。专家据dev多轮调整会适应开发集，必须披露。
+
+    证据的验证级别：自由科学Python的产物会绑定宿主执行记录，但“可以重跑”不证明数据或公式语义正确。最终原始事实优先调用materialize_raw_evidence(RawEvidenceSpec(...))，声明真实数据文件、列、筛选、step窗和统计，保留返回的proof_id/sha256/数值/单位；宿主会独立重算。复杂算子与模型指标可继续自由探索，正式模型指标用materialize_formula_evidence从规范预测重新计分。派生数据明确标记derived，不能冒充原始测量。未登记的手写CSV不作为已验证证据。
+
+    反证文字是方案，不是执行证明。Hypothesis.checks用EvidenceCheck声明planned/completed、证据ID、可选相减的另一证据、比较算子和阈值。completed由宿主对已独立重算的证据实际计算；supported要求检查完成且声明条件成立，rejected要求有已完成且不成立的条件，否则使用weak/unresolved。通过数值条件不代表物理因果已证实；alternative_explanation仍是待检验解释，不能靠文字声称排除。普通画图不需要创建假设或做公式选优。

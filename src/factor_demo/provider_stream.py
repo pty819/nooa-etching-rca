@@ -1,7 +1,7 @@
 """Forward reasoning/text streams while NOOA collects complete tool calls.
 
-Tool arguments never enter the browser event stream. Reply text comes from a
-separate tool-free generation selected by a task-local context variable.
+Tool arguments never enter the browser event stream. Canonical reply text is
+published directly; the task-local compatibility channel remains for old traces.
 """
 
 import asyncio

@@ -15,7 +15,7 @@ from .etch_features import extract_features, feature_catalog
 from .etch_model import simulate_run
 from .etch_recipe import RECIPE_ID, STEPS, hardware_for_period, recipe_document, recipe_sha256
 from .etch_sensors import sensor_catalog
-from .synthetic import write_json
+from .io_utils import write_json
 
 
 def _table(rows: list[dict], feature_order: list[str]) -> pl.DataFrame:
@@ -27,8 +27,25 @@ def _table(rows: list[dict], feature_order: list[str]) -> pl.DataFrame:
 
 
 def generate_etching(
-    directory: Path, runs: int = 90, seed: int = 20261017, dt: float = 0.5, controls: bool = True
+    directory: Path,
+    runs: int = 360,
+    seed: int = 20261017,
+    dt: float = 0.5,
+    controls: bool = True,
+    *,
+    scenario: str = "edge_leak_contact",
+    profile: str = "balanced_v3",
 ) -> dict:
+    scenarios = {
+        "edge_leak_contact",
+        "pump_restriction",
+        "surface_condition",
+        "edge_ring",
+        "common_mode_only",
+        "stable_control",
+    }
+    if scenario not in scenarios or profile not in {"balanced_v3", "legacy_v2"}:
+        raise ValueError("Unknown scenario or cohort profile")
     if runs < 45 or runs % 5:
         raise ValueError("Use at least 45 target runs and a multiple of 5 (independent lots)")
     if directory.exists() and any(directory.iterdir()):
@@ -52,6 +69,8 @@ def generate_etching(
     if batches - n1 - n2 < 3:
         n1 = batches - n2 - 3
     period_batches = [n1, n2, batches - n1 - n2]
+    if profile == "balanced_v3":
+        period_batches = [batches // 3 + (1 if i < batches % 3 else 0) for i in range(3)]
     data_rows, control_rows, metadata, step_rows, outcome_rows, truth_rows = [], [], [], [], [], []
     start = datetime(2026, 1, 1, 8)
     sequence = 0
@@ -59,9 +78,19 @@ def generate_etching(
     for period, count in enumerate(period_batches, 1):
         for batch in range(count):
             # Validation data occur within every business state, in separate lots.
-            train_count = max(1, count - 2)
-            split = "train" if batch < train_count else "dev" if batch == count - 2 else "test"
+            held_lots = 1 if profile == "legacy_v2" else max(1, count // 4)
+            train_count = count - 2 * held_lots
+            split = (
+                "train" if batch < train_count else "dev" if batch < count - held_lots else "test"
+            )
             batch_id = f"p{period}_lot_{batch:03d}"
+            cohort = np.random.default_rng(np.random.SeedSequence([seed, period, batch, 991]))
+            if scenario == "common_mode_only":
+                calibration = [0, 0.7, 0.3][period - 1] + cohort.normal(0, 0.05)
+                ambient = 23 + (1.2 if period > 1 else 0) + cohort.normal(0, 0.15)
+            else:
+                calibration = cohort.normal(0, 0.05 if scenario == "stable_control" else 0.7)
+                ambient = 23 + cohort.normal(0, 0.15 if scenario == "stable_control" else 1.2)
             for within in range(5):
                 recipe = RECIPE_ID
                 target_index = sequence
@@ -72,6 +101,33 @@ def generate_etching(
                     )
                     hrng = np.random.default_rng(run_seed + 1)
                     hardware = hardware_for_period(period, chamber, hrng)
+                    if scenario != "edge_leak_contact":
+                        hardware = replace(
+                            hardware,
+                            edge_leak_sccm_per_torr=0.010 * hrng.uniform(0.95, 1.05),
+                            edge_contact_factor=hrng.uniform(0.97, 1.03),
+                        )
+                    if chamber == 0:
+                        if scenario == "pump_restriction":
+                            hardware = replace(
+                                hardware,
+                                pump_conductance_factor=hardware.pump_conductance_factor
+                                * [1, 0.65, 0.9][period - 1],
+                            )
+                        elif scenario == "surface_condition":
+                            hardware = replace(
+                                hardware, wall_recombination_factor=[1, 1.8, 1.2][period - 1]
+                            )
+                        elif scenario == "edge_ring":
+                            hardware = replace(
+                                hardware, edge_ring_recession_mm=[0, 0.6, 0.2][period - 1]
+                            )
+                    if profile == "balanced_v3":
+                        hardware = replace(
+                            hardware,
+                            calibration_offset_c=calibration,
+                            ambient_c=ambient + hrng.normal(0, 0.1),
+                        )
                     timestamp = start + timedelta(
                         minutes=25 * sequence + 8 * chamber, hours=6 if period == 3 else 0
                     )
@@ -160,8 +216,8 @@ def generate_etching(
     write_json(
         directory / "truth.private" / "scenario.json",
         {
-            "fault": "edge backside helium seal leak plus reduced wafer-ESC contact",
-            "repair": "seal leakage repaired; thermal contact remains partially degraded",
+            "fault": scenario,
+            "repair": "parameter recovery varies by the selected private scenario",
             "unobserved_variables": [
                 "edge contact factor",
                 "wafer actual temperatures",
@@ -188,9 +244,9 @@ def generate_etching(
                 for r in phases.to_dicts()
             ],
             "label_meaning": {
-                "label1": "normal",
-                "label2": "major deviation",
-                "label3": "after maintenance with residual deviation",
+                "label1": "business period 1",
+                "label2": "business period 2; cause and significance require checks",
+                "label3": "business period 3 after recorded intervention; effect requires checks",
             },
             "maintenance": "Six-hour intervention between periods 2 and 3; detailed work order unavailable",
             "reference": "chamber_B is a contemporaneous normal reference, one sample per lot",
@@ -217,6 +273,14 @@ def generate_etching(
             "label3": "after maintenance, residual deviation",
         },
         "period_batches": period_batches,
+        "cohort_profile": profile,
+        "scenario": scenario,
+        "validation_lots_per_period": [
+            1 if profile == "legacy_v2" else max(1, n // 4) for n in period_batches
+        ],
+        "validation_quality": "limited_fixture"
+        if min(period_batches) < 12
+        else "multiple_independent_lots",
         "batch_size": 5,
         "metadata": ["timestamp", "site_id", "recipe_id", "chamber_id"],
         "label": "label",

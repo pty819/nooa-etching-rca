@@ -11,11 +11,19 @@
 :alt: 候选经过范围路径数值和引用检查，冻结证据后审查；无效审查先修复，真实阻断才触发有界研究修订。
 ```
 
-检查**不能**保证保存表由正确算法从源数据计算而来、run_ids确实构成某个聚合、全部自然语言数字都有引用、单位物理含义正确，或某部件具备因果关系。任意自写OPLS、时序窗口和导出脚本仍需要可复现检查。尤其不能把“引用表中的7.92是真的”扩写为“所有压力和传热推理都正确”。
+## 来源、重算与完成的反证
+
+每个EvidenceRef绑定DatasetRef和成功cell的输入/源码/产物哈希，未记录CSV不能被当成执行结果。来源等级明确区分：`exploratory_reproducible`仅表示该代码产生了该表；`derived_recomputed`只核对派生输入；`raw_recomputed`由宿主从原始版本按声明的文件、列、过滤、step时间比例及聚合独立计算；`formula_recomputed`从保护的正式模型预测核对指标。
+
+`materialize_raw_evidence`支持原始计数、单值、mean/median/std等以及乘积/step窗口。它不执行传入源码，单位可与传感器目录核对。任意自写OPLS或复杂算子仍通过自由Python探索与正式特征流程表达，不假装宿主能证明任意程序语义。
+
+Hypothesis.checks明确planned/completed、evidence_id、比较关系和阈值；completed由宿主针对独立重算证据执行。supported需要完成且通过的检查，rejected需要已完成的失败条件，未执行的反证只能保留计划或弱结论。falsification_test和alternative_explanation保留解释用途，文本本身不能证明实验执行。
+
+这些检查仍**不能**保证全部自然语言数字都有引用、任意算法都正确，或某部件具备因果关系。正文将研究者说明与确定性事实表分开显示。
 
 ## Predict审查的输入和输出
 
-输入包包含当前ResearchReply、已复算的数值及哈希、允许的claim/evidence ID、局部反思的实际宿主事件和明确观察范围。review不执行科学代码，所以没有重算的事项必须列为缺口或局限。
+审查使用另一个已配置模型的只读Predict agent；缺少不同模型时明确not_reviewed，不冒充独立审查。全部审查请求仍计入同一共享预算。输入包包含当前ResearchReply、已复算的数值及哈希、允许的claim/evidence ID、局部反思的实际宿主事件和明确观察范围。review不执行科学代码，所以没有重算的事项必须列为缺口或局限。
 
 ReviewIssue分为evidence、statistics、physics、causality、scope、reproducibility；严重度为blocking或warning。每项要定位具体claim_id，列出已有反证与可执行检查。claim_id只能是一个已有假设/证据ID或summary/scope；多个引用放evidence_ids数组，不能把斜杠连接的字符串当作一个ID。
 
@@ -27,13 +35,15 @@ ReviewIssue分为evidence、statistics、physics、causality、scope、reproduci
 |---|---|
 | passed | 当前审查没有blocking；可以保留warning |
 | needs_revision | 尚有blocking且还有定向修订额度 |
-| budget_exhausted | 模型预算或修订次数已耗尽，保留受限结果；reason区分来源 |
+| budget_exhausted | 实际模型预算耗尽，保留受限检查点 |
+| revision_limit | 定向修订次数用完仍有阻断，不是预算耗尽 |
+| not_required | 当前可视化/讨论任务无需研究审查 |
 | not_reviewed | 审查被关闭，或无法形成有效审查引用；不能展示为通过 |
 | discussion | 只讨论已有结果，本轮未新做科学审查 |
 
 每个 `attempt_NN` 保存report、verification、review、outcome和对应文件副本。最多两次定向revise；研究状态与审查状态分开。初始生成尚未形成可核验主报告便耗尽预算时，宿主可交付已有分支指针与未完成说明，不拼造主报告的科学结论。
 
-最终发布发生在状态确定之后。前端对阶段性回复标注“待审查”；最终消息携带审查状态。正文撰写器只整理给定事实，无工具且不应新增数字，但其语言生成并没有获得形式化的逐句事实保证。
+最终发布发生在状态确定之后。前端对阶段性回复标注“待审查”；最终消息携带审查状态。规范正文由宿主原样分段推送，不再交给第二个模型重写。审查未通过或未完成时发布受限检查点并降低支持状态。
 
 ## 局部Reflexion
 

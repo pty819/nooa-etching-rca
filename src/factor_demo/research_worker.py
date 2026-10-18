@@ -1,90 +1,74 @@
-"""Standalone persistent scientific Python worker; no provider or NOOA objects."""
+"""One untrusted scientific cell. No host protocol or credential-bearing objects."""
 
-import contextlib
-import io
 import json
 import os
 import sys
-import time
 import traceback
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 
 def main():
+    config = json.loads(Path(sys.argv[1]).read_text())
+    # The bootstrap alone is trusted; the guard precedes both user code and pickle.
+    from sandboxing import install_linux
+
+    install_linux(config["reads"], [config["work"]])
+    import cloudpickle
+
+    namespace = {"__name__": "__research__"}
+    previous = Path(config["previous"]) if config.get("previous") else None
+    if previous and previous.is_file():
+        with previous.open("rb") as stream:
+            namespace.update(cloudpickle.load(stream))
+    namespace.update(
+        DATASET=Path(os.environ["RESEARCH_DATASET"]),
+        DATASET_ID=os.environ.get("RESEARCH_DATASET_ID", ""),
+    )
     sys.path.insert(0, str(Path.cwd()))
-    namespace = {
-        "__name__": "__research__",
-        "DATASET": Path(os.environ.get("RESEARCH_DATASET", "../input")),
-        "DATASET_ID": os.environ.get("RESEARCH_DATASET_ID", ""),
-    }
-    fd = os.environ.get("NOOA_WORKER_CHANNEL_FD")
-    protocol = os.fdopen(int(fd), "w", buffering=1) if fd else sys.stdout
-
-    def send(value):
-        protocol.write(json.dumps(value) + "\n")
-        protocol.flush()
-
-    class Output(io.StringIO):
-        def __init__(self):
-            super().__init__()
-            self.total = 0
-            self.kept = 0
-            self.pending = ""
-            self.last = 0.0
-
-        def flush(self):
-            if self.pending:
-                for start in range(0, len(self.pending), 4096):
-                    send({"kind": "output", "text": self.pending[start : start + 4096]})
-                self.pending = ""
-                self.last = time.monotonic()
-
-        def write(self, value):
-            self.total += len(value)
-            kept = value[: max(0, 262144 - self.kept)]
-            self.kept += len(kept)
-            self.pending += kept
-            super().write(kept)
-            if len(self.pending) >= 4096 or time.monotonic() - self.last >= 0.025:
-                self.flush()
-            return len(value)
-
-    for line in sys.stdin:
-        request = json.loads(line)
-        stream = Output()
-        ok = True
-        with contextlib.redirect_stdout(stream), contextlib.redirect_stderr(stream):
-            try:
-                exec(compile(request["code"], request["filename"], "exec"), namespace)  # noqa: S102
-            except SystemExit as error:
-                if error.code not in (None, 0):
-                    ok = False
-                    traceback.print_exc()
-            except BaseException:  # noqa: BLE001 - keep the worker alive after scientific cell errors
-                ok = False
-                traceback.print_exc()
-        stream.flush()
-        truncated = stream.total > stream.kept
-        if truncated:
-            send(
-                {
-                    "kind": "output",
-                    "text": "\n[Output truncated at 262144 characters; save large results to artifacts.]\n",
-                }
-            )
-        response = {
-            "kind": "result",
-            "ok": ok,
-            "output": stream.getvalue(),
-            "output_truncated": truncated,
-            "output_characters": stream.total,
-            "variables": {
-                k: type(namespace[k]).__name__
-                for k in list(namespace)[-100:]
-                if not k.startswith("_")
-            },
-        }
-        send(response)
+    result = 0
+    try:
+        executing = namespace
+        if config.get("script"):
+            sys.argv = [config["filename"], *config["args"]]
+            sys.path.insert(0, str(Path(config["filename"]).parent))
+            executing = {
+                "__name__": "__main__",
+                "__file__": config["filename"],
+                "DATASET": namespace["DATASET"],
+                "DATASET_ID": namespace["DATASET_ID"],
+            }
+        exec(compile(Path(config["source"]).read_text(), config["filename"], "exec"), executing)  # noqa: S102 - guarded child only
+    except SystemExit as error:
+        result = error.code if isinstance(error.code, int) else 1 if error.code else 0
+        if error.code is not None and not isinstance(error.code, int):
+            print(str(error.code), file=sys.stderr)
+    except BaseException:  # noqa: BLE001 - the supervisor reads the actual exit code
+        traceback.print_exc()
+        result = 1
+    excluded = {"__builtins__", "DATASET", "DATASET_ID"}
+    state = {}
+    dropped = []
+    for name, value in namespace.items():
+        if name.startswith("__") or name in excluded:
+            continue
+        try:
+            cloudpickle.dumps(value)
+            state[name] = value
+        except Exception:  # noqa: BLE001 - checkpoint skips nonserializable locals
+            dropped.append(name)
+    with Path(config["checkpoint"]).open("wb") as stream:
+        cloudpickle.dump(state, stream)
+    Path(config["metadata"]).write_text(
+        json.dumps(
+            {
+                "variables": {k: type(v).__name__ for k, v in list(state.items())[-100:]},
+                "dropped": dropped[-100:],
+            }
+        )
+    )
+    raise SystemExit(result)
 
 
 if __name__ == "__main__":

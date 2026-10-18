@@ -1670,3 +1670,10 @@ h1 {
 .dataset-preview pre {white-space:pre-wrap;overflow-wrap:anywhere;font-size:10px;max-height:280px;overflow:auto;}
 .dataset-import label {display:grid;gap:7px;margin:12px 0;}
 .dataset-import select,.dataset-import textarea {padding:8px;border:1px solid #d7dfce;border-radius:6px;background:#fbfcf7;font:inherit;color:inherit;width:100%;}
+
+.panel-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 3px; padding: 0 10px; }
+.panel-tabs button { justify-content: center; min-width: 0; white-space: nowrap; }
+.panel-tabs button svg { display: none; }
+.evaluation-panel table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+.evaluation-panel th, .evaluation-panel td { text-align: left; border-bottom: 1px solid var(--line); padding: 9px 4px; font-size: 11px; }
+.evaluation-panel td { text-align: right; font-family: monospace; }

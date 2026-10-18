@@ -12,5 +12,7 @@
   "max_model_calls": 256,
   "max_total_tokens": 4000000,
   "branch_timeout_s": 1800,
-  "validation_retries": 3
+  "validation_retries": 3,
+  "max_research_iterations": 64,
+  "wait_no_progress_s": 600
 }

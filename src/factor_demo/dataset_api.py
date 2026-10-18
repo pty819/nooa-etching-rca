@@ -9,8 +9,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from .case_lease import case_lease
 from .dataset_adapter import discovery_copy, index_frame, safe_path
 from .dataset_models import DatasetSchema
 from .datasets import DatasetSession
@@ -18,12 +19,14 @@ from .live_events import LiveEvents, branch_path
 
 
 class DatasetChoice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     dataset_ref: str = ""
     agent_id: str = "main"
     back: str = ""
 
 
 class LocalDatasetImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     dataset: str
     data_schema: DatasetSchema | None = None
     title: str = Field(default="补充的本地数据", max_length=200)
@@ -138,7 +141,12 @@ def router(project, session_path, jobs):
         try:
             local = run if body.agent_id == "main" else branch_path(run, body.agent_id)
             s = DatasetSession(local)
-            result = await asyncio.to_thread(s.select, body.dataset_ref, body.back)
+
+            def perform_select():
+                with case_lease(run):
+                    return s.select(body.dataset_ref, body.back)
+
+            result = await asyncio.to_thread(perform_select)
             e = LiveEvents(local, root=run, agent_id=body.agent_id)
             e.emit("dataset.selected", dataset_ref=result["id"], scope=s.registry.scope(s.owner))
             e.close()
@@ -155,7 +163,7 @@ def router(project, session_path, jobs):
         local = run if body.agent_id == "main" else branch_path(run, body.agent_id)
         s = DatasetSession(local)
 
-        def perform():
+        def perform_unlocked():
             stage = s.registry.base / "supplied" / uuid.uuid4().hex
             try:
                 schema = discovery_copy(source, stage, body.data_schema)
@@ -170,6 +178,10 @@ def router(project, session_path, jobs):
                 )
             finally:
                 shutil.rmtree(stage, ignore_errors=True)
+
+        def perform():
+            with case_lease(run):
+                return perform_unlocked()
 
         try:
             doc = await asyncio.to_thread(perform)

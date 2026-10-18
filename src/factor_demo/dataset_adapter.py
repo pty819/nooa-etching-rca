@@ -111,7 +111,14 @@ def index_frame(root: Path, schema: DatasetSchema) -> pl.DataFrame:
         raise ValueError("Dataset identities must be unique and non-null")
     if schema.asset_column:
         for name in frame[schema.asset_column].drop_nulls():
-            if not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts:
+            if (
+                not isinstance(name, str)
+                or not name
+                or name == "."
+                or "\\" in name
+                or Path(name).is_absolute()
+                or ".." in Path(name).parts
+            ):
                 raise ValueError("Asset paths must be relative to their dataset")
     return frame.with_columns(pl.col(schema.id_column).cast(pl.String))
 

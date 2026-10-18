@@ -252,6 +252,14 @@ class FormulaLab:
         train, dev = (runs.filter(pl.col("split") == split) for split in ["train", "dev"])
         if set(train["batch_id"]) & set(dev["batch_id"]):
             raise ValueError("A lot crosses train/dev boundaries")
+        dev_lots = {
+            label: dev.filter(pl.col("label") == label)["batch_id"].n_unique()
+            for label in spec.labels
+        }
+        if any(n < spec.min_dev_lots_per_label for n in dev_lots.values()):
+            raise ValueError(
+                "Too few independent development lots per label; use a larger cohort or explicitly declare a limited protocol"
+            )
         if any(set(frame["label"]) != set(spec.labels) for frame in [train, dev]):
             raise ValueError("Both labels must occur in train and dev")
         if train["batch_id"].n_unique() < spec.folds:
@@ -282,6 +290,7 @@ class FormulaLab:
             "revision": 0,
             "plan": {
                 **spec.model_dump(),
+                "dev_lots_by_label": dev_lots,
                 "input_sha256": fingerprint,
                 "environment": environment(),
                 "recipe_id": runs["recipe_id"][0] if "recipe_id" in runs.columns else None,

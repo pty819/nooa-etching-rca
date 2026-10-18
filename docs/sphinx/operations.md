@@ -16,7 +16,7 @@ python3 -m http.server 8877 --directory docs/_build/html
 
 ## 研究环境
 
-当前完整自由研究要求macOS、Python3.12/3.13、uv与Node22.13+。先同步运行依赖和前端：
+当前完整自由研究要求macOS sandbox-exec或Linux Landlock/seccomp、Python3.12/3.13、uv与Node24。先同步运行依赖和前端：
 
 ```bash
 uv sync --python 3.12
@@ -31,9 +31,9 @@ Web启动命令显式加载.env，因为provider列表来自服务进程环境�
 ## 生成并核对数据
 
 ```bash
-uv run factor-demo generate-etch --data data/etching-v2 --runs 90
-uv run factor-demo validate-etch --data data/etching-v2
-uv run factor-demo preview-etch --data data/etching-v2
+uv run factor-demo generate-etch --data data/etching-v3 --runs 360
+uv run factor-demo validate-etch --data data/etching-v3
+uv run factor-demo preview-etch --data data/etching-v3
 ```
 
 生成器拒绝覆盖非空目录；要复现实验应保留seed、sample period和manifest，新数据用新目录。默认命令会生成完整原始曲线、特征、隐藏状态和本地预览，随后只把发现范围导给研究会话。仓库未捆绑生成后的二进制数据。
@@ -47,7 +47,7 @@ uv run --env-file .env factor-demo serve --host 127.0.0.1 --port 8765
 浏览器新建研究时选择etching-v2与自己的custom模型。也可直接用CLI：
 
 ```bash
-uv run factor-demo autoresearch --data data/etching-v2 \
+uv run factor-demo autoresearch --data data/etching-v3 \
   --run runs/my-case --provider custom \
   --message '分别比较三个业务时段，先核对目录和批次，保存可复核证据。'
 
@@ -91,3 +91,13 @@ workflow以push、pull_request和workflow_dispatch触发。构建job固定Ubuntu
 当前选择保存在SQLite，重启可恢复；每次切换重建科学worker。不要编辑`.datasets/versions`或对象存储，校验会拒绝哈希不符的文件。公开公式副本按内容增量导出，复制期间不持有SQLite写事务；相同内容的冻结快照去重。科学worker输出有界，截断会明确标记，不应把日志末尾当成完整计算表。
 
 request_data只暴露未来统一拉数接口；未配置时返回unavailable，不会访问外部API或知识图谱。已冻结的旧研究仍绑定原DatasetRef，加入新条目后应创建新比较协议，不能混用分数。
+
+## 旧案例与独立评估
+
+旧90片案例使用显式`generate-etch --data data/old-case --runs 90 --profile legacy_v2`；早期特征表命令在`factor-demo legacy`内，不是默认research入口。新版默认360片会保持recipe，扩展独立lot。
+
+独立审查默认`review_provider=auto`选另一个已配置模型；也可在runtime.json指定provider名，或设置FACTOR_REVIEW_MODEL、FACTOR_REVIEW_API_BASE、FACTOR_REVIEW_API_KEY。没有不同模型就保留not_reviewed，不能当作通过。
+
+研究完成后在Vue“收尾评估”页冻结当前定义，或执行`factor-demo finalize-etch --run runs/你的会话`；`factor-demo evaluation --run ...`只读结果。已冻结报告的变化不允许再次选优。画图和一般探索不强制评估。
+
+`python scripts/run_blind_benchmark.py --root data/一个新目录 --runs 180`准备六种中性命名场景，映射和真值保持在发现输入之外。`--score`只评分已产生的报告，缺失报告不会生成假分数。

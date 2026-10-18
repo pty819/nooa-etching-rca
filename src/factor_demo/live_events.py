@@ -119,8 +119,16 @@ class LiveEvents:
                 self.db.close()
 
 
+def artifact_root(run: Path) -> Path:
+    work = (run / "workspace").resolve()
+    root = run / "workspace/artifacts"
+    if root.is_symlink() or not root.resolve().is_relative_to(work):
+        raise ValueError("Artifact directory must remain inside the research workspace")
+    return root.resolve()
+
+
 def artifact_path(run: Path, name: str) -> Path:
-    root = (run / "workspace/artifacts").resolve()
+    root = artifact_root(run)
     path = (run / "workspace" / name).resolve()
     if not path.is_relative_to(root) or not path.is_file():
         raise ValueError("Choose an existing file under artifacts/")
@@ -146,7 +154,7 @@ class MarkdownReplies:
 
     def prepare(self, markdown: str, image_paths=None, table_paths=None) -> tuple[str, list]:
         body = markdown
-        if self.publication == "final" and self.final_appendix:
+        if self.publication in {"final", "checkpoint"} and self.final_appendix:
             body += "\n\n" + self.final_appendix
         attachments = []
         for name in image_paths or []:
@@ -188,7 +196,7 @@ class MarkdownReplies:
         if not re.fullmatch(r"[\w-]{1,100}", message_id):
             raise ValueError("message_id must be 1-100 letters, digits, underscores or hyphens")
         body, attachments = self.prepare(markdown, image_paths, table_paths)
-        if self.publication == "final" and self.review_status:
+        if self.publication in {"final", "checkpoint"} and self.review_status:
             body = (
                 f"> 审查状态：{self.review_status}（本轮检查状态，不代表根因已被证实）\n\n" + body
             )
@@ -206,7 +214,7 @@ class MarkdownReplies:
 
 
 def artifact_index(run: Path, prefix: str = "artifacts") -> list[dict]:
-    root = (run / "workspace/artifacts").resolve()
+    root = artifact_root(run)
     start = (run / "workspace" / prefix).resolve()
     if not start.is_relative_to(root):
         raise ValueError("Browse inside artifacts/")

@@ -20,7 +20,7 @@ import polars as pl
 
 from .dataset_adapter import detect_schema, discovery_copy, index_frame, safe_path
 from .dataset_models import AcquisitionRequest, AcquisitionResult, DatasetDerivation, DatasetSchema
-from .synthetic import write_json
+from .io_utils import write_json
 
 
 def file_hash(path: Path) -> str:
@@ -168,6 +168,22 @@ class DatasetRegistry:
             )
             if set(frame[schema.id_column]) - allowed:
                 raise ValueError("Subset introduces identities outside its declared parents")
+            comparable = []
+            for parent, parent_doc in zip(parents, parent_docs, strict=True):
+                parent_schema = DatasetSchema.model_validate(parent_doc["schema"])
+                if schema.model_dump(exclude={"index_file"}) != parent_schema.model_dump(
+                    exclude={"index_file"}
+                ):
+                    raise ValueError("Changing a dataset schema requires a transform, not a subset")
+                parent_frame = index_frame(self.path(parent), parent_schema)
+                if set(parent_frame.columns) != set(frame.columns):
+                    raise ValueError(
+                        "Adding or replacing columns requires a transform, not a subset"
+                    )
+                comparable.append(parent_frame.select(frame.columns))
+            original_rows = pl.concat(comparable, how="vertical_relaxed").unique()
+            if frame.join(original_rows, on=frame.columns, how="anti", nulls_equal=True).height:
+                raise ValueError("Subset changed original values; register a transform")
         staging = self.base / "staging" / uuid.uuid4().hex
         staging.mkdir(parents=True)
         try:
@@ -178,7 +194,7 @@ class DatasetRegistry:
                     )
                 if path.is_file():
                     relative = path.relative_to(source)
-                    if any(
+                    if relative.name == "_dataset_ref.json" or any(
                         part.startswith(".") or part in {"__pycache__", "truth.private"}
                         for part in relative.parts
                     ):
@@ -186,6 +202,29 @@ class DatasetRegistry:
                     dest = staging / relative
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(path, dest)
+            if relation == "subset" and schema.asset_column:
+                selected_assets = frame[schema.asset_column].drop_nulls().to_list()
+                all_assets = set()
+                for parent, parent_doc in zip(parents, parent_docs, strict=True):
+                    ps = DatasetSchema.model_validate(parent_doc["schema"])
+                    if ps.asset_column:
+                        all_assets.update(
+                            index_frame(self.path(parent), ps)[ps.asset_column]
+                            .drop_nulls()
+                            .to_list()
+                        )
+                for copied in sorted(staging.rglob("*"), reverse=True):
+                    if copied.is_file():
+                        name = str(copied.relative_to(staging))
+                        belongs = lambda asset, name=name: (
+                            name == asset or name.startswith(asset.rstrip("/") + "/")
+                        )
+                        if any(belongs(a) for a in all_assets) and not any(
+                            belongs(a) for a in selected_assets
+                        ):
+                            copied.unlink()
+                    elif copied.is_dir() and not any(copied.iterdir()):
+                        copied.rmdir()
             # A row subset may keep immutable asset paths without physically recopying parents.
             if schema.asset_column:
                 for name in frame[schema.asset_column].drop_nulls():
@@ -238,10 +277,78 @@ class DatasetRegistry:
             if schema.asset_column:
                 for name in frame[schema.asset_column].drop_nulls():
                     safe_path(staging, name, directory=True)
+                    if relation == "subset":
+                        candidates = [
+                            self.path(p) / name for p in parents if (self.path(p) / name).exists()
+                        ]
+                        if not candidates or any(
+                            asset_fingerprint(staging / name) != asset_fingerprint(p)
+                            for p in candidates
+                        ):
+                            raise ValueError(
+                                "Subset changed an original asset; register a transform"
+                            )
             code_hash = file_hash(code) if code else None
             if code:
                 shutil.copyfile(code, staging / "_transform.py")
             write_json(staging / "dataset.json", {"schema": schema.model_dump()})
+            if relation == "subset":
+                for path in sorted(staging.rglob("*")):
+                    if not path.is_file():
+                        continue
+                    name = str(path.relative_to(staging))
+                    if name in {schema.index_file, "dataset.json", "_transform.py"}:
+                        continue
+                    originals = [
+                        self.path(p) / name
+                        for p, d in zip(parents, parent_docs, strict=True)
+                        if name in d["files"]
+                    ]
+                    if not originals:
+                        raise ValueError("New derived files require a transform, not a subset")
+                    if path.suffix in {".parquet", ".csv", ".jsonl", ".ndjson"}:
+                        from .dataset_adapter import read_table
+
+                        table = read_table(path)
+                        identity_column = (
+                            schema.id_column
+                            if schema.id_column in table.columns
+                            else "run_id"
+                            if name == schema.steps_file and "run_id" in table.columns
+                            else None
+                        )
+                        if identity_column:
+                            table = table.with_columns(
+                                pl.col(identity_column).cast(pl.String)
+                            ).filter(
+                                pl.col(identity_column).is_in(frame[schema.id_column].implode())
+                            )
+                            original = pl.concat(
+                                [
+                                    read_table(p)
+                                    .with_columns(pl.col(identity_column).cast(pl.String))
+                                    .select(table.columns)
+                                    for p in originals
+                                ],
+                                how="vertical_relaxed",
+                            ).unique()
+                            if table.join(
+                                original, on=table.columns, how="anti", nulls_equal=True
+                            ).height:
+                                raise ValueError(
+                                    "Subset changed original table values; register a transform"
+                                )
+                            if path.suffix == ".parquet":
+                                table.write_parquet(path)
+                            elif path.suffix == ".csv":
+                                table.write_csv(path)
+                            else:
+                                table.write_ndjson(path)
+                            continue
+                    if not any(file_hash(path) == file_hash(p) for p in originals):
+                        raise ValueError(
+                            "Subset changed original file contents; register a transform"
+                        )
             files = {
                 str(p.relative_to(staging)): file_hash(p)
                 for p in sorted(staging.rglob("*"))
@@ -529,7 +636,7 @@ class DatasetSession:
 
 
 def prepare_generic_workspace(data: Path, run: Path, schema: DatasetSchema | None = None):
-    if run.exists() and any(run.iterdir()):
+    if run.exists() and any(p.name != ".turn.lock" for p in run.iterdir()):
         raise ValueError("Choose a new session directory")
     public = run / "input"
     (run / "workspace/artifacts").mkdir(parents=True)

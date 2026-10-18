@@ -10,8 +10,10 @@ from .dataset_models import AcquisitionRequest, DatasetDerivation, DatasetSchema
 from .formula_models import FormulaHandoff, FormulaPlan, FormulaSpec  # noqa: F401 - CodeAct types
 from .research_models import (
     CandidateAssessment,
+    EvidenceCheck,  # noqa: F401 - public CodeAct type
     EvidenceRef,  # noqa: F401 - public CodeAct type
     Hypothesis,  # noqa: F401 - public CodeAct type
+    RawEvidenceSpec,
     ResearchReply,
     ReviewResult,
 )
@@ -21,22 +23,19 @@ with hidden:
     import uuid
 
     from nooa import TextSkill
-    from nooa.config import LoopGuardConfig
-    from nooa.config.strategy_config import CodeActConfig, PredictConfig, ReflexionConfig
-    from nooa.runtime.restrictions import RESTRICTED_MODULES, RestrictionsConfig
+    from nooa.config.strategy_config import PredictConfig
     from nooa.storage import nosnapshot
-    from nooa.strategies import CodeActV2, PredictStrategy
+    from nooa.strategies import PredictStrategy
 
     from .capabilities import Capabilities
     from .datasets import DatasetSession
-    from .evidence import research_postcondition, research_precondition
     from .formula_lab import FormulaLab
     from .live_events import MarkdownReplies, artifact_index
     from .live_events import public_artifact_path as artifact_path
-    from .local_reflection import TrackedReflexion, reflection_active
+    from .local_reflection import reflection_active
     from .reply_writer import StreamingReplyWriter
     from .research_workspace import PythonWorkspace
-    from .strategy_factory import reflection_strategy
+    from .strategy_factory import reflection_strategy, research_strategy
 
 
 class AutoresearchAgent(Agent):
@@ -51,7 +50,8 @@ class AutoresearchAgent(Agent):
     PNG等二进制由run_code中的plt.savefig('artifacts/plot.png')直接生成；write_file只接受文本。
     重要数值保存为CSV/Parquet并返回EvidenceRef（id/claim/artifact/column/where/statistic/value/unit/run_ids）。
     value表示where筛出的单行单元格；聚合用mean/count等明确操作。Hypothesis.evidence_ids引用这些ID；
-    supported/weak必须有结构化引用。summary中的数值也应提供evidence条目，不用文字代替数学证据。
+    supported/weak必须有结构化引用。普通探索的表绑定执行记录；确认原始数值用materialize_raw_evidence，正式模型指标用materialize_formula_evidence。
+    supported/rejected需要完成并由宿主计算的EvidenceCheck；反证计划不能写成已经执行。summary中的数值也应提供evidence条目。
     可以通过spawn_research自主分派不同问题，通过wait_research/read_branch_result获取结果再综合复核。
     子任务使用同一公开数据、独立工作区和历史；提供任务及必要证据路径，不能假定它读过父会话。
     分支证据可通过branches/<id>/artifacts/...读取和引用。各方向可动态合并、指导或取消。
@@ -59,7 +59,7 @@ class AutoresearchAgent(Agent):
     使用inspect_candidate可做有界原生Reflexion，它只读已有证据，不发消息、不改研究文件。
     有阶段性观察需要展示时用reply(message_id,brief,image_paths,table_paths)，普通工具参数不推流；短任务可直接返回最终ResearchReply。
     研究进展是阶段性观察；最终交接由宿主在审查完成后发布，research返回结构化ResearchReply即可。
-    不复制最终全文多次，不编造数字或路径；记录失败与反证，不凑十个原因。变量跨进程不保留，文件和历史会保存。
+    不复制最终全文多次，不编造数字或路径；记录失败与反证，不凑十个原因。同一数据范围的可序列化变量通过子进程检查点保留；切换范围后重置，文件和历史会保存。
     """
 
     _workspace: Annotated[PythonWorkspace, hidden, nosnapshot]
@@ -155,6 +155,29 @@ class AutoresearchAgent(Agent):
             for d in graph["nodes"]
         ]
         return graph
+
+    async def materialize_raw_evidence(self, spec: RawEvidenceSpec) -> dict:
+        """Have the host recompute a declared raw value/window/aggregate and save its proof.
+
+        Use for final numerical facts. Free run_code remains available for arbitrary
+        exploration. A transformed dataset is marked derived, never a raw measurement.
+        Returns a complete EvidenceRef; keep its proof_id and fields unchanged.
+        """
+        await self._writable()
+        from .trusted_evidence import materialize_raw
+
+        return materialize_raw(self._workspace.run, spec, self._workspace.events)
+
+    async def materialize_formula_evidence(
+        self, study_id: str, trial_id: str, metric: str, evidence_id: str, claim: str
+    ) -> dict:
+        """Recompute a canonical formula trial metric from its saved predictions."""
+        await self._writable()
+        from .trusted_evidence import materialize_formula
+
+        return materialize_formula(
+            self._workspace.run, self._formula_lab, study_id, trial_id, metric, evidence_id, claim
+        )
 
     async def derive_dataset(self, derivation: DatasetDerivation, select: bool = True) -> dict:
         """Register a dataset produced by ANY Python code you wrote and executed.
@@ -340,13 +363,9 @@ class AutoresearchAgent(Agent):
         target = (self._workspace.work / path).resolve()
         if not target.is_relative_to(self._workspace.work) or target.suffix != ".py":
             raise ValueError("Choose a Python script inside the research workspace")
-        command = [str(target), *(args or [])]
-        loader = "import os,runpy,sys;from pathlib import Path;target=sys.argv[1];sys.argv=sys.argv[1:];runpy.run_path(target,init_globals={'DATASET':Path(os.environ['RESEARCH_DATASET']),'DATASET_ID':os.environ.get('RESEARCH_DATASET_ID','')},run_name='__main__')"
-        code = (
-            "import subprocess, sys\n"
-            f"subprocess.run([sys.executable, '-u', '-c', {loader!r}, *{command!r}], check=True)"
+        return await self._workspace.execute(
+            f"run_script({path!r}, args={args or []!r})", timeout_s, script=target, args=args
         )
-        return await self._workspace.execute(code, timeout_s)
 
     async def reply(
         self,
@@ -355,11 +374,11 @@ class AutoresearchAgent(Agent):
         image_paths: list[str] | None = None,
         table_paths: list[str] | None = None,
     ) -> dict:
-        """Actively send a Markdown response via an independent plain-text stream.
+        """Publish your exact Markdown through the canonical SSE channel.
 
         Provide clear reply points and exact verified evidence in brief, including
-        numbers/units/limitations to preserve. A tool-free generation writes the
-        user-facing text; the result includes the delivered Markdown for review.
+        numbers/units/limitations to preserve. The host delivers the exact text without another model rewriting it;
+        the result includes the delivered Markdown.
         Choose your own stable message_id (e.g. progress-1); it is a publication key,
         not an incoming user-message ID. Reuse it for an intentional retry/update.
         No literal-string convention, argument preview or tool_stream is needed.
@@ -389,24 +408,7 @@ class AutoresearchAgent(Agent):
         cap = min(32000, max(100, max_chars))
         return {"path": path, "content": content[:cap], "truncated": len(content) > cap}
 
-    @strategy(
-        CodeActV2(
-            config=CodeActConfig(
-                max_iterations=None,
-                max_retries=Capabilities.load().validation_retries,
-                cell_timeout=330,
-                restrictions=RestrictionsConfig(restricted_imports=RESTRICTED_MODULES),
-                loop_guard=LoopGuardConfig(
-                    repeat_threshold=Capabilities.load().loop_repeat_threshold,
-                    window=Capabilities.load().loop_window,
-                )
-                if Capabilities.load().loop_guard
-                else None,
-                preconditions=[research_precondition],
-                postconditions=[research_postcondition],
-            )
-        )
-    )
+    @strategy(research_strategy(Capabilities()))
     async def research(self, message: str) -> ResearchReply:
         """Continue autonomous research using the full conversation and new input.
 
@@ -425,24 +427,7 @@ class AutoresearchAgent(Agent):
         """
         ...
 
-    @strategy(
-        CodeActV2(
-            config=CodeActConfig(
-                max_iterations=None,
-                max_retries=Capabilities.load().validation_retries,
-                cell_timeout=330,
-                restrictions=RestrictionsConfig(restricted_imports=RESTRICTED_MODULES),
-                loop_guard=LoopGuardConfig(
-                    repeat_threshold=Capabilities.load().loop_repeat_threshold,
-                    window=Capabilities.load().loop_window,
-                )
-                if Capabilities.load().loop_guard
-                else None,
-                preconditions=[research_precondition],
-                postconditions=[research_postcondition],
-            )
-        )
-    )
+    @strategy(research_strategy(Capabilities()))
     async def chat(self, message: str) -> ResearchReply:
         """用中文讨论已有证据。可读取已有artifact并调用reply实时回复。
 
@@ -451,19 +436,7 @@ class AutoresearchAgent(Agent):
         """
         ...
 
-    @strategy(
-        CodeActV2(
-            config=CodeActConfig(
-                max_iterations=None,
-                max_retries=Capabilities.load().validation_retries,
-                cell_timeout=330,
-                loop_guard=LoopGuardConfig(),
-                preconditions=[research_precondition],
-                postconditions=[research_postcondition],
-                restrictions=RestrictionsConfig(restricted_imports=RESTRICTED_MODULES),
-            )
-        )
-    )
+    @strategy(research_strategy(Capabilities()))
     async def revise(self, message: str, previous: ResearchReply, review: dict) -> ResearchReply:
         """针对证据检查或审查指出的具体问题补证并修订，不重复无关实验。
 
@@ -485,12 +458,7 @@ class AutoresearchAgent(Agent):
         """
         ...
 
-    @strategy(
-        TrackedReflexion(
-            base=CodeActV2(config=CodeActConfig(max_iterations=6, max_retries=1, cell_timeout=60)),
-            config=ReflexionConfig(max_iterations=Capabilities.load().reflexion_iterations),
-        )
-    )
+    @strategy(reflection_strategy(Capabilities()))
     async def _inspect_candidate(self, candidate: ResearchReply) -> CandidateAssessment:
         """只读审查候选结果，检查证据一致性、反证和观测边界，返回评估及建议。
         可读现有artifact，不执行研究代码、不写文件、不发消息或派生任务。不是根因认证。
@@ -531,7 +499,9 @@ class AutoresearchAgent(Agent):
             if interrupted and not budget_stopped
             else "passed"
             if accepted and not interrupted and not budget_stopped
-            else "budget_exhausted",
+            else "budget_exhausted"
+            if budget_stopped
+            else "not_satisfactory",
             "assessment": result.model_dump() if result else None,
             "verdicts": self._reflection_verdicts,
             "experimental": True,

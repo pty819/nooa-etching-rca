@@ -11,7 +11,48 @@ import polars as pl
 
 from .etch_features import extract_features
 from .etch_recipe import STEPS, make_schedule
-from .synthetic import write_json
+from .io_utils import write_json
+
+
+def separation_diagnostics(directory: Path) -> dict:
+    """Report saturation without treating separability as mechanism discovery."""
+    meta = pl.read_parquet(directory / "runs.parquet").filter(~pl.col("is_control"))
+    features = pl.read_parquet(directory / "features.parquet")
+    columns = [c for c in features.columns if "__step_" in c]
+    rows = []
+    labels = sorted(meta["label"].unique())
+    for i, a in enumerate(labels):
+        for b in labels[i + 1 :]:
+            dev = meta.filter((pl.col("split") == "dev") & pl.col("label").is_in([a, b]))
+            matrices = []
+            for label in [a, b]:
+                ids = dev.filter(pl.col("label") == label)["run_id"]
+                matrices.append(
+                    features.filter(pl.col("run_id").is_in(ids.implode()))
+                    .select(columns)
+                    .to_numpy()
+                )
+            x, y = matrices
+            valid = np.isfinite(x).all(axis=0) & np.isfinite(y).all(axis=0)
+            separated = valid & ((x.max(axis=0) < y.min(axis=0)) | (y.max(axis=0) < x.min(axis=0)))
+            lots = {
+                label: dev.filter(pl.col("label") == label)["batch_id"].n_unique()
+                for label in [a, b]
+            }
+            rows.append(
+                {
+                    "labels": [a, b],
+                    "dev_samples": dev.height,
+                    "dev_lots_per_label": lots,
+                    "feature_count": len(columns),
+                    "perfect_single_feature_separators": int(separated.sum()),
+                    "saturated": bool(separated.any()),
+                }
+            )
+    return {
+        "pairs": rows,
+        "interpretation": "Perfect dev separation does not distinguish physical causes, downstream effects or correlated features; use held-out lots and mechanism/negative-control scores.",
+    }
 
 
 def validate_etching(directory: Path, recompute: int = 3) -> dict:
@@ -204,6 +245,7 @@ def validate_etching(directory: Path, recompute: int = 3) -> dict:
         .agg(pl.col("center_edge_nonuniformity_pct").median())
         .sort("recipe_id", "label")
         .to_dicts(),
+        "separation_diagnostics": separation_diagnostics(directory),
         "limits": "Internal consistency checks for a reduced-order simulation; not a validated fab digital twin",
     }
     write_json(directory / "validation.json", result)

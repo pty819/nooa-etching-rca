@@ -22,7 +22,7 @@ class FormulaSpec(BaseModel):
     steps: list[int] = Field(default_factory=list)
     params: dict = Field(default_factory=dict)
     unit: str = Field(min_length=1)
-    kind: Literal["per_sample","learned"] = "per_sample"
+    kind: Literal["per_sample", "learned"] = "per_sample"
 
 
 class FormulaPlan(BaseModel):
@@ -33,6 +33,7 @@ class FormulaPlan(BaseModel):
     metric: Literal["balanced_accuracy", "accuracy", "f1_macro"] = "balanced_accuracy"
     folds: int = Field(default=3, ge=2, le=10)
     seed: int = Field(default=42, ge=0, le=2147483647)
+    min_dev_lots_per_label: int = Field(default=2, ge=1)
     models: list[Literal["logistic", "random_forest", "extra_trees", "hist_gradient_boosting"]] = (
         Field(default_factory=lambda: ["logistic", "random_forest"], min_length=1)
     )

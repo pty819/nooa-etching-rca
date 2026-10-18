@@ -15,7 +15,12 @@ def public_case(path):
     (path / "input").mkdir(parents=True)
     (path / "workspace/artifacts").mkdir(parents=True)
     pl.DataFrame(
-        {"run_id": ["r1", "r2"], "split": ["train", "dev"], "recipe_id": ["fixed", "fixed"]}
+        {
+            "run_id": ["r1", "r2"],
+            "split": ["train", "dev"],
+            "recipe_id": ["fixed", "fixed"],
+            "value": [4, 6],
+        }
     ).write_parquet(path / "input/runs.parquet")
     (path / "input/recipe.json").write_text('{"recipe_id":"fixed"}')
     (path / "session.json").write_text(
@@ -34,7 +39,24 @@ def public_case(path):
 
 
 def report(path, value=4):
-    (path / "workspace/artifacts/evidence.csv").write_text("run_id,value\nr1,4\nr2,6\n")
+    from concurrent.futures import ThreadPoolExecutor
+
+    from factor_demo.datasets import DatasetSession
+    from factor_demo.research_workspace import PythonWorkspace
+
+    async def produce():
+        worker = PythonWorkspace(path)
+        worker.dataset_session = DatasetSession(path)
+        try:
+            result = await worker.execute(
+                "import polars as pl\npl.read_parquet(DATASET/'runs.parquet').select('run_id','value').write_csv('artifacts/evidence.csv')"
+            )
+            assert result["ok"], result["output"]
+        finally:
+            await worker.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(lambda: asyncio.run(produce())).result()
     return ResearchReply(
         summary="待审查的发现",
         evidence=[
@@ -104,10 +126,12 @@ def test_aggregate_and_constant_recipe_precondition(tmp_path):
     candidate.evidence[0].statistic = "value"
     with pytest.raises(EvidenceError, match="exactly one"):
         EvidenceVerifier(root).verify(candidate)
+    from factor_demo.datasets import DatasetSession
+
     pl.DataFrame({"run_id": ["r1"], "split": ["test"], "recipe_id": ["fixed"]}).write_parquet(
-        root / "input/runs.parquet"
+        DatasetSession(root).path() / "runs.parquet"
     )
-    with pytest.raises(EvidenceError, match="train/dev"):
+    with pytest.raises((ValueError, EvidenceError), match="hash changed"):
         EvidenceVerifier(root).scope()
 
 
@@ -157,14 +181,15 @@ def test_native_hooks_reflexion_and_context_survive_snapshot(tmp_path):
         )
         try:
             install_research_context(agent, "inspect candidates")
+            before_cells = len(list((root / "workspace/research_cells").glob("*.py")))
             assert agent._knowledge_registry.activated() == ["etch.physics", "etch.statistics"]
             result = await agent.inspect_candidate(candidate)
             # Confirm the actual NOOA model context advertises the broader stack.
             model_context = str(agent._llm.calls[0].messages)
             for library in ["NumPy", "SciPy", "scikit-learn", "aeon", "statsmodels"]:
                 assert library in model_context
-            assert result["status"] == "budget_exhausted" and len(result["verdicts"]) == 2
-            assert not (root / "workspace/research_cells").exists()
+            assert result["status"] == "not_satisfactory" and len(result["verdicts"]) == 2
+            assert len(list((root / "workspace/research_cells").glob("*.py"))) == before_cells
             token = reflection_active.set(True)
             try:
                 with pytest.raises(PermissionError):

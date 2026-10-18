@@ -6,7 +6,7 @@
 |---|---|---|---|
 | R01 | etch_model.py、etch_features.py、etch_sensors.py | test_etching.py | 已实现波形和特征；物理系数未生产标定 |
 | R02 | etch_recipe.py、etch_validation.py | test_etching.py | 指令哈希与波形一致；反馈可变 |
-| R03 | autoresearch_agent.py、research_workspace.py | test_autoresearch.py、test_orchestration.py | 通用代码可用；完整执行后端当前macOS |
+| R03 | autoresearch_agent.py、research_workspace.py | test_autoresearch.py、test_orchestration.py | 通用代码可用；受限执行后端为macOS与Linux |
 | R04 | research_models.py、reply_writer.py、Vue组件 | test_reply_writer.py、workspace.test.ts | 中文+图表已实现；逐次改算完整报告字段待补 |
 | R05 | autoresearch.py、web.py、LiveEvents | test_streaming.py、test_orchestration.py | 指导后续生效；不改写正在生成中的同一请求 |
 | R06 | evidence.py | test_capabilities.py | 表值、范围与引用可检；不证明任意变换正确 |

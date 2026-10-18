@@ -13,7 +13,7 @@
 - [专家公式研究](docs/sphinx/formula-research.md)：原始序列任意Python算子、跨传感器融合、多轮版本、固定lot验证、Logistic/三类树模型、最佳重算与中文排名交接；Vue独立比较页。
 - 原生 LoopGuard、Context/TextSkill、证据前后置校验、Predict 审查与有界定向修订、局部只读 Reflexion。
 - 原生 QueueManager/Channel 与独立研究进程、工作区、NOOA存储和恢复组合；默认两个活跃分支。
-- 主/子研究、摘要、审查及正文共用 AdmissionBroker 和持久 token 预算。
+- 主/子研究、摘要、独立模型审查共用 AdmissionBroker 和持久 token 预算；正文直接推送已核验规范文本。
 - Vue 3 + TypeScript + Vite；实际推理与执行输出、独立 Markdown 正文流、图片与CSV表格、SSE恢复和定向专家指导。
 
 当前配置：272000总上下文、50000输出上限、177600输入token摘要阈值。普通工具完整收集参数后执行，不从部分工具参数中截取用户答复。
@@ -24,7 +24,7 @@
 
 ## 运行要求与复现
 
-完整自由代码研究当前要求 **macOS sandbox-exec、Python3.12/3.13、uv和Node22.13+**。文档可在Linux构建，不需要API密钥；这不代表研究执行后端已支持Linux。
+自由代码执行使用 **macOS sandbox-exec或支持Landlock/seccomp的Linux，Python3.12/3.13、uv和Node24**。缺少受限执行机制时拒绝执行。Linux/macOS运行回归由独立Runtime checks工作流检查；文档构建不替代运行验收。
 
 ```bash
 uv sync --python 3.12
@@ -32,7 +32,7 @@ npm ci --prefix frontend
 npm run build --prefix frontend
 cp .env.example .env
 # 在本机编辑.env，填写自己的模型服务信息；不要提交真实key。
-uv run factor-demo generate-etch --data data/etching-v2 --runs 90
+uv run factor-demo generate-etch --data data/etching-v3 --runs 360
 uv run --env-file .env factor-demo serve --host 127.0.0.1 --port 8765
 ```
 
@@ -47,6 +47,8 @@ python3 -m http.server 8877 --directory docs/_build/html
 ```
 
 文档使用独立 `.venv-docs`、锁定Python/Node依赖和构建期Mermaid SVG，不导入研究运行时、不调用模型。GitHub Actions对PR严格构建，对main部署GitHub Pages；Pages只提供静态文档。
+
+修复设计、证据等级和收尾test评分见[审核问题修复](docs/sphinx/audit-remediation.md)。旧版生成与演示入口移至显式 `factor-demo legacy` 命令。
 
 ## 验证与解释边界
 
@@ -64,6 +66,6 @@ make docs-check
 
 仓库提供源码、生成器、测试、配置与详细设计；不上传已有私有对话、数据集、研究数据库/trace、模型key或本地缓存。公开生成器包含故障构造逻辑，因此严格盲评应只给agent公开发现集并隔离提示作者与真值，不可给它全仓权限后仍宣称盲评。
 
-当前worker限制不构成恶意agent的完整主机隔离，服务默认只监听本机。不是已标定数字孪生、生产设备规格或现场操作系统。
+外层CodeAct与科学代码均在无凭据受限子进程运行，保留自由编写科学代码的能力。服务默认只监听本机。不是已标定数字孪生、生产设备规格或现场操作系统。
 
 本项目MIT许可；NOOA及其他依赖保留各自许可，见[第三方归属](THIRD_PARTY_NOTICES.md)。

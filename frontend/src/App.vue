@@ -26,6 +26,7 @@ import {
 import ResearchMessage from "./components/ResearchMessage.vue";
 import FormulaStudies from "./components/FormulaStudies.vue";
 import DatasetPanel from "./components/DatasetPanel.vue";
+import EvaluationPanel from "./components/EvaluationPanel.vue";
 import { useResearch } from "./useResearch";
 import { asset } from "./api";
 const {
@@ -70,6 +71,8 @@ const names: Record<string, string> = {
   inspect_candidate: "局部自反思",
   inspect_dataset:'查看数据版本',list_datasets:'查找数据集',read_dataset_lineage:'查看数据血缘',derive_dataset:'登记动态子集',select_dataset:'切换分析范围',return_dataset:'返回父集或主集',request_data:'登记补数请求',
   create_formula_study: "固定公式比较协议",
+  materialize_raw_evidence: "核对原始数值",
+  materialize_formula_evidence: "核对模型指标",
   begin_formula_comparison: "继续本轮公式比较",
   register_formula: "登记公式版本",
   evaluate_formula_set: "比较公式与模型",
@@ -373,7 +376,9 @@ function statusLabel(value: string) {
         <button :class="{ on: s.tab === 'formulas' }" @click="s.tab = 'formulas'; loadArtifacts()">
           <FlaskConical :size="14" />公式比较<span>{{ s.formulaStudies.length }}</span>
         </button>
+        <button :class="{on:s.tab==='evaluation'}" @click="s.tab='evaluation'"><Check :size="14" />收尾评估</button>
       </div>
+      <div v-if="s.tab==='evaluation'" class="panel-scroll"><EvaluationPanel :session="s.selected" :active="s.active" /></div>
       <div v-if="s.tab === 'live'" class="panel-scroll">
         <div class="current-stage">
           <span class="section-label">当前状态</span>

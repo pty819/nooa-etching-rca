@@ -1,20 +1,18 @@
 sequenceDiagram
-  participant U as Vue界面
-  participant H as HTTP服务
-  participant A as 研究host
-  participant M as 共享预算模型客户端
-  participant W as 科学worker
-  participant E as 根ui.sqlite
-  U->>H: POST消息及request_id和agent_id
-  H->>A: 启动后台轮次或投递指导
-  A->>M: 研究生成，工具参数完整收集
-  M-->>E: 实际推理增量，不转发工具参数片段
-  A->>W: 执行完整研究代码
-  W-->>E: stdout和stderr增量
-  W-->>A: 完成状态与保存产物
-  A->>M: reply正文生成，tools为空
-  M-->>E: reply.delta及offset
-  A->>E: reply.commit及附件Markdown
-  U->>H: SSE或Last-Event-ID续传
-  E-->>H: 全局序号事件
-  H-->>U: 按agent身份重建消息与工具
+  participant Model as 模型服务
+  participant Host as NOOA与宿主
+  participant Worker as 受限科学进程
+  participant Log as 持久事件
+  participant UI as Vue界面
+  Model-->>Host: 实际推理增量（若有）
+  Host->>Log: model.reasoning.delta
+  Model-->>Host: 完整工具参数
+  Host->>Worker: 执行完整代码
+  Worker-->>Host: 真实输出与退出码
+  Host->>Log: tool.start/output/end
+  Host->>Host: 证据核验与独立模型审查
+  Host->>Log: 规范正文 start/delta/commit
+  Note over Host,Log: 不再由第二个模型改写核验数字
+  Log-->>UI: SSE及事件ID
+  UI->>Log: 重连后请求缺失事件
+  Log-->>UI: 回放同一规范正文

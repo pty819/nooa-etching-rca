@@ -23,11 +23,11 @@ def generate():
         "本页由AST生成，不导入NOOA、供应商配置或研究会话。文件链接指向本次构建的提交（本地构建为main）。",
         "",
     ]
-    for path in sorted((ROOT / "src/factor_demo").glob("*.py")):
+    for path in sorted((ROOT / "src/factor_demo").rglob("*.py")):
         tree = ast.parse(path.read_text())
         relative = path.relative_to(ROOT).as_posix()
         modules += [
-            f"## {path.stem}",
+            f"## {path.relative_to(ROOT / 'src/factor_demo').with_suffix('').as_posix().replace('/', '.')}",
             "",
             ast.get_docstring(tree) or "项目模块。",
             "",

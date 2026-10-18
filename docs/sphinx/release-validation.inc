@@ -1,27 +1,22 @@
-验证日期：2026-10-17。本地执行平台为macOS；研究回归使用Python3.12，独立文档环境使用Python3.13；GitHub文档构建使用Python3.12。
+验证日期：2026-10-18。本地Python3.12与macOS受限执行后端；文档环境Python3.13。以下为审核修复后的执行记录，历史数据和旧报告没有被覆盖。
 
-| 检查 | 本次本地结果 |
+| 检查 | 实际结果与范围 |
 |---|---|
-| Python完整回归 | 84 passed，0 failed；保留100条上游弃用/类型提示警告 |
-| Vue交互回归 | 11 passed，0 failed |
-| 动态数据集 | 现场代码划分、嵌套32→16→8、回退、恢复、分支授权、多父合并、显式版本、范围化证据与公式绑定均通过；外部拉数/KG未接入 |
-| 真实GLM工程运行 | 自主生成/运行划分代码，实际完成90→10→4→10→90；CSV与各DatasetRef一致；首次错误样本ID引用被门禁拒绝并修正。独立模型审查达到600秒时限，未记为审查通过；后续只读展示38.5秒交付成功，状态not_required/delivered，不冒充补过审查 |
-| 多模态公式 | 表格、图片、文本均实际提取、评价并冻结；learned算子逐训练fold拟合，自定义状态序列化和重算通过 |
-| 故障与资源回归 | skills真实模型输入、可选参考表、正文失败交付、一次模型请求的轻量任务、修订上限、超大输出截断和快照去重通过 |
-| TypeScript与Vite | 类型检查与生产构建通过 |
-| 扩展科学库 | aeon/statsmodels纳入显式依赖；真实worker完成DTW、三维归一化、回归、PCA、SciPy找峰、图表保存及JIT缓存检查 |
-| 任务范围回归 | 历史未完成比较不阻塞新轮只画图；读取旧结果不启用门禁，显式继续后要求交接，预算降级不误带历史研究 |
-| 专家公式流程 | 实际worker与原生CodeAct调用通过；三公式+一组合在现有刻蚀公开数据上完成8次模型比较并重算一致，保留NaN失败与修订；不是新的独立诊断 |
-| Ruff | src、tests、scripts检查通过 |
-| Sphinx | nitpicky与warning-as-error严格构建通过 |
-| Mermaid | 24张图全部实际渲染为SVG；检查其引用、XML与viewBox |
-| 本地链接与资产 | 26个HTML页面，全部站内链接/资源引用无缺失；动态数量见Actions日志，不把外部链接或重复属性算作已验收本地链接 |
-| 源仓发布范围 | Git跟踪文件与本地配置key字面值检查通过；未提交原始对话、runs、data、凭据与缓存 |
-| 浏览器 | 已检查公网首页中文导航、架构SVG、布局与溢出，修正首页边距 |
-| 中文搜索回归 | 修复Sphinx的JS构造器不匹配，补jieba及领域词典；生成脚本实际执行通过，四个中文词在索引中，本地浏览器检索“背氦”已返回相关章节 |
-| 首轮云端构建/部署 | [运行39005898488](https://github.com/pty819/nooa-etching-rca/actions/runs/39005898488)的build与deploy均success |
-| 公网HTTP | 首页、架构、agent、算法、自审页及首页CSS/SVG均200 |
+| Python完整回归 | 99 passed，0 failed；76条上游类型/弃用提示保留；其后新增的网关参数回归见下行 |
+| 网关、持出评分与规范正文专项 | 8 passed；MiniMax Anthropic thinking参数实际HTTP构造、内部路由ID不发送、冻结test模型与重算、规范文本原样交付 |
+| Vue交互回归 | 14 passed；新增收尾评估显示、运行中禁用和旧响应丢弃 |
+| TypeScript/Vite | 类型检查与生产构建通过 |
+| 前端依赖 | 完整npm audit零漏洞；Vitest5.0.5及锁文件更新 |
+| 新执行边界 | 真实CodeAct不能访问目录外无害探针文件或self._llm/self._workspace；批准工具仍可用；17MiB输出被限长，伪造成功文本和后续cell不串线 |
+| 证据与反证 | 未记录CSV拒绝；原始输入独立重算；已完成predicate实际执行；派生/自由产物不能升级成原始事实；子集不能改值或夹带未选资产 |
+| 状态与恢复 | 修订上限、Reflexion不满意、预算用尽分开；结构化非零退出码；审计错误不覆盖原异常；CLI/UI共享操作锁 |
+| 新默认物理数据 | 360目标+72参考、200通道、11步；全部432条原始曲线的recipe与指令波形一致；质量守恒最大误差9.44e-16 |
+| 饱和诊断 | 新默认集三组label对比的dev各60片/12lot，仍有3193、1299、2915个单特征完全分离；明确不能用分类满分区分真因和伪相关 |
+| 多场景评测准备 | 6个180目标片场景生成完成；含共同漂移与稳定无故障，两者真值机制集合为空。报告尚缺，评分入口明确report_missing，没有伪造agent盲评结果 |
+| 真实GLM | 在新执行器实际读取324行发现数据（216train、108dev），一次缩进失败后修正；宿主计数重算为324并交付，未读取test |
+| 独立模型审查 | 真实接入发现MiniMax thinking/缓存键参数不兼容并修复，加入HTTP回归；首次审查格式错误，保留not_reviewed而不记passed；后续有界格式重试结果以实际记录为准 |
+| Ruff | 源码、测试和scripts检查与格式检查通过 |
+| 文档 | 严格Sphinx构建、24张实际Mermaid SVG、中文索引执行与站内资源/链接检查通过；具体数量随源码生成索引改变 |
+| 浏览器 | 实际重新载入本地服务，核对受限检查点、原始输入重算等级、收尾评估入口及非强制说明 |
 
-以上云端结果明确对应首次部署；中文搜索缺陷是在首次部署后浏览器实测发现的，随后加入修复和可执行回归。最新提交的云端状态以[Actions实际运行](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)为准，读者也可直接检索“背氦”验证索引与浏览器逻辑。
-
-动态数据升级实现提交`e1d406e`的[构建与部署39046159078](https://github.com/pty819/nooa-etching-rca/actions/runs/39046159078)均成功；动态数据、特征隔离、自审和需求页面均HTTP 200且包含新增内容。后续验证记录提交不改变运行代码。
+Runtime checks新增Ubuntu24.04与macOS15的真实pytest，以及Node24前端测试、构建与审计。此处本地结果不能替代远端平台验收；最新状态以[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)和[文档发布](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)的对应提交为准。

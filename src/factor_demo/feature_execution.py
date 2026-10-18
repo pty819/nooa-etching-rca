@@ -12,7 +12,7 @@ import polars as pl
 
 from .dataset_adapter import index_frame, read_table, safe_path
 from .datasets import file_hash
-from .synthetic import write_json
+from .io_utils import write_json
 
 
 class FeatureExecutor:

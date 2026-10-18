@@ -35,7 +35,7 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 
 入口先核对会话，建立本轮共享预算、公开工具和独立工作区；恢复NOOA快照后重新安装运行态对象、技能与上下文。模型生成的外层 `python_cell` 调用应用公开方法。真正的数据计算进入 `run_code` 或 `write_file` + `run_script`，在那里使用只读`DATASET`、`DATASET_ID`与`artifacts/`；切换数据范围会重建worker，旧变量不再复用。
 
-候选返回后，应用先核验并冻结证据，再调用原生Predict审查。需要时进入 `revise`，保留每次旧结果。最终结构化答复、审查结果和Markdown先保存，之后经独立正文生成流交付。纯可视化通过文件/数值检查后直接交付，不调用科学审查或第二次正文生成。正文生成若因预算、超时或其他可恢复错误失败，应用直接发送已保存报告，不虚构逐token进展。
+候选返回后，应用先核验并冻结证据，再调用原生Predict审查。需要时进入 `revise`，保留每次旧结果。最终结构化答复、审查结果和Markdown先保存，之后原样分段推送规范Markdown。纯可视化通过文件/数值检查后直接交付，不强制科学审查。正文推送失败时保留规范报告及交付状态，不再调用模型重写。
 
 ## 两个不同的代码环境
 
@@ -56,3 +56,7 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 [动态数据集](dynamic-datasets.md)把现场生成的划分代码、父版本、schema、理由和输出哈希绑定为DatasetRef。主/子方向各自选择范围；分支只能使用派生时分配的根及后代。公式计划和数值证据显式绑定版本，避免返回主集后错用旧统计。文件对象和修订快照采用内容寻址，工作区改写不影响已冻结文件。
 
 [特征隔离](feature-isolation.md)区分逐对象算子与学得的变换，fold训练与开发数据走独立入口。外部拉数仅保留类型化可注入接口，未配置时明确不可用；本次没有连接知识图谱或实际外部数据源。
+
+## 审核后的执行与交付路径
+
+可信主进程仅持有NOOA编排、模型客户端、预算和明确工具实现。模型生成的外层CodeAct经JSON代理在新进程运行，科学Python另开新进程；二者均不继承live agent。宿主以实际退出码和私有账本归属计算证据。只读Predict reviewer可使用另一已配置模型，全部请求仍受同一预算约束。最终Markdown由核验结果确定性渲染与推送。持出test/仿真参考仅由单独收尾入口评分。细节与测试映射见[审核问题修复](audit-remediation.md)。

@@ -9,7 +9,9 @@ import pytest
 from factor_demo.research_workspace import PythonWorkspace
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="macOS scientific worker policy")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="enforced execution backend required"
+)
 def test_scientific_stack_computes_and_caches_inside_restricted_workspace(tmp_path):
     run = tmp_path / "case"
     (run / "workspace/artifacts").mkdir(parents=True)

@@ -7,7 +7,7 @@ import json
 import sqlite3
 from pathlib import Path
 
-from .synthetic import write_json
+from .io_utils import write_json
 
 
 def audit_session(run: Path) -> dict:
@@ -92,7 +92,9 @@ def audit_session(run: Path) -> dict:
         ),
         "code_cells": len(cells),
         "worker_cell_errors": sum(not c["ok"] for c in cells),
-        "subprocess_nonzero_returns": sum("RC: 1" in c["output"] for c in cells),
+        "subprocess_nonzero_returns": sum(
+            c.get("kind") == "script" and c.get("returncode") not in (None, 0) for c in cells
+        ),
         "data_export_unchanged": unchanged,
         "completed_rounds": sum(c["speaker"] == "agent" for c in conversation),
         "expert_feedback_turns": sum(c["speaker"] == "simulated_expert" for c in conversation),

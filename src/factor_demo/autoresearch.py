@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import time
 import uuid
 from pathlib import Path
 
+from .io_utils import write_json
 from .research_workspace import PythonWorkspace, prepare_workspace
-from .synthetic import write_json
 
 INITIAL_MESSAGE = """自主研究固定recipe刻蚀公开数据，分别比较1↔2、2↔3、1↔3。自由选择算法和写代码，
 形成有数学证据、反证和可区分检查的假设。可以动态派生独立子研究，读取其结果后综合，避免重复证据。
@@ -18,7 +19,14 @@ INITIAL_MESSAGE = """自主研究固定recipe刻蚀公开数据，分别比较1�
 达到可复核检查点返回ResearchReply，宿主会审查并可能要求定向修订。"""
 
 
-async def research_turn(
+async def research_turn(run: Path, *args, **kwargs):
+    from .case_lease import case_lease
+
+    with case_lease(run.resolve()):
+        return await _research_turn(run, *args, **kwargs)
+
+
+async def _research_turn(
     run: Path,
     provider_name="glm",
     message="",
@@ -67,12 +75,25 @@ async def research_turn(
     storage = SQLiteStorageManager(run / "conversation.sqlite")
     enable_tracing(exporters=[exporters.journal_file(run / "traces")])
     base = build_client(provider, settings)
-    base._http.httpx_async.headers["X-Research-Agent"] = events.agent_id
-    base._http.httpx_async.headers["X-Research-Mission"] = events.task_id
     if live:
         observe_client(base, events)
     llm = budget.client(base, events, settings)
     writer = StreamingReplyWriter(llm, replies) if live else None
+    from .reviewer import EvidenceReviewer, choose_provider
+
+    reviewer = None
+    review_llm = None
+    review_provider = (
+        choose_provider(provider, settings)
+        if policy.review_enabled and mode == "research"
+        else None
+    )
+    if review_provider:
+        review_base = build_client(review_provider, settings)
+        if live:
+            observe_client(review_base, events)
+        review_llm = budget.client(review_base, events, settings)
+        reviewer = EvidenceReviewer(llm=review_llm)
     agent = AutoresearchAgent(
         workspace,
         replies=replies,
@@ -193,7 +214,9 @@ async def research_turn(
             external = await on_agent(agent, workspace)
         async with asyncio.timeout(timeout):
             if mode == "research":
-                reply, review = await research_with_review(agent, message, folder, policy, llm)
+                reply, review = await research_with_review(
+                    agent, message, folder, policy, llm, reviewer
+                )
             else:
                 if mode == "chat":
                     from .strategy_factory import research_strategy
@@ -210,7 +233,16 @@ async def research_turn(
                 "mission": events.task_id,
                 "revision": review["revision"],
                 "delivery_status": "pending",
+                "evidence_verification": review.get("verification"),
+                "reviewer_model": review_provider.model if review_provider else None,
+                "reviewer_independent_model": bool(
+                    review_provider and review_provider.model != provider.model
+                ),
             }
+            if review["status"] not in {"passed", "not_required", "discussion"}:
+                for hypothesis in payload["hypotheses"]:
+                    if hypothesis["status"] == "supported":
+                        hypothesis["status"] = "weak"
             if mode == "research":
                 formula_result = agent._formula_lab.handoff(reply.formula_comparison)
                 payload["formula_result"] = formula_result
@@ -221,7 +253,9 @@ async def research_turn(
             write_json(run / "latest_review.json", review)
             (folder / "reply.md").write_text(render_reply(payload))
             if mode == "research":
-                replies.publication = "final"
+                replies.publication = (
+                    "final" if review["status"] in {"passed", "not_required"} else "checkpoint"
+                )
                 replies.review_status = review["status"]
                 # Appended by the host on commit even if the text writer omits the table.
                 replies.final_appendix = payload.get("formula_markdown", "")
@@ -248,10 +282,7 @@ async def research_turn(
                     try:
                         await writer.send(
                             f"round-{turn}-final",
-                            "以下是本轮已经保存、验证和审查的最终报告。严格保持数值、假设状态和局限，不新增结论。审查状态为"
-                            + review["status"]
-                            + "。\n"
-                            + final_text,
+                            final_text,
                             images,
                             tables,
                         )
@@ -264,7 +295,7 @@ async def research_turn(
                             if isinstance(delivery_error, (BudgetExceeded, AdmissionCallCapError))
                             else "reply.delivery_fallback",
                             error_type=type(delivery_error).__name__,
-                            message="正文生成未完成，直接交付已保存并验证的结构化报告",
+                            message="正文推送未完成，直接交付已保存的规范报告",
                         )
                 else:
                     replies.send(f"round-{turn}-final", final_text, images, tables)
@@ -320,6 +351,10 @@ async def research_turn(
         finally:
             await workspace.close()
             await agent.aclose()
+            if reviewer:
+                await reviewer.aclose()
+            if review_llm:
+                await review_llm.aclose()
             await llm.aclose()
             storage.close()
             snapshot = budget.snapshot()
@@ -328,32 +363,76 @@ async def research_turn(
             budget.close()
         from opentelemetry import trace
 
-        trace.get_tracer_provider().force_flush()
+        with contextlib.suppress(Exception):
+            trace.get_tracer_provider().force_flush()
         from .research_audit import audit_session
 
-        audit_session(run)
-        if owned_events:
-            events.emit("task.end", status="checkpoint" if completed else "interrupted")
-            events.close()
+        try:
+            audit_session(run)
+        except Exception as audit_error:  # noqa: BLE001 - preserve the research exception
+            with contextlib.suppress(Exception):
+                write_json(folder / "audit-error.json", {"error_type": type(audit_error).__name__})
+                events.emit(
+                    "audit.warning",
+                    error_type=type(audit_error).__name__,
+                    message="研究结果已保留，审计未完成",
+                )
+        finally:
+            if owned_events:
+                with contextlib.suppress(Exception):
+                    events.emit("task.end", status="checkpoint" if completed else "interrupted")
+                with contextlib.suppress(Exception):
+                    events.close()
 
 
 def render_reply(reply: dict, include_formula=True) -> str:
-    lines = [reply["summary"], ""]
+    lines = ["### 研究者说明（解释与因果判断待专家核实）", "", reply["summary"], ""]
     if reply.get("dataset_ref"):
         lines += ["> 数据范围：`" + reply["dataset_ref"] + "`。", ""]
+    verified = reply.get("evidence_verification") or {}
+    if verified.get("checks"):
+        lines += ["### 可核对数值", "", "| 引用 | 数值 | 来源验证 |", "|---|---|---|"]
+        for item in verified["checks"]:
+            proof = item.get("provenance", {})
+            grade = {
+                "raw_recomputed": "原始输入重新计算",
+                "formula_recomputed": "规范预测重新计分",
+                "derived_recomputed": "派生数据重新计算",
+                "exploratory_reproducible": "已关联执行记录，计算语义待核实",
+            }.get(proof.get("grade"), "旧记录，来源待核实")
+            lines.append(f"| {item['id']} | {item['actual']} {item['unit']} | {grade} |")
+        lines.append("")
     for h in reply["hypotheses"]:
+        status = {
+            "supported": "已通过声明的数值检查，机制待确认",
+            "weak": "仍需补证",
+            "rejected": "当前被反证",
+            "unresolved": "尚不能判断",
+        }[h["status"]]
         lines += [
-            f"### {h['id']} · {h['title']} ({h['status']})",
+            f"### {h['id']} · {h['title']} ({status})",
             "",
             h["mathematical_evidence"],
             "",
             "替代解释：" + h["alternative_explanation"],
             "",
-            "反证检查：" + h["falsification_test"],
+            "反证方案（执行状态以登记检查为准）：" + h["falsification_test"],
             "",
             "证据文件：" + ", ".join(h["evidence_files"]),
             "",
         ]
+    declared = verified.get("hypothesis_checks", {})
+    if declared:
+        lines += ["### 登记检查的执行结果", ""]
+        for hypothesis_id, checks in declared.items():
+            if not checks:
+                lines.append(f"- {hypothesis_id}：尚无已完成的登记检查，反证文字仅为方案。")
+            for check in checks:
+                state = "满足声明条件" if check["passed"] else "不满足声明条件"
+                lines.append(
+                    f"- {hypothesis_id} · {check['description']}：{check['value']} {check['operator']} {check['threshold']}，{state}。"
+                )
+        lines.append("")
     if reply["questions_for_expert"]:
         lines += ["专家待审：", "", *["- " + x for x in reply["questions_for_expert"]], ""]
     if reply["next_experiments"]:

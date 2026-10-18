@@ -157,6 +157,9 @@ class BudgetedClient(AdmissionControl):
         raise RuntimeError("Synchronous model calls are disabled; use budgeted async calls")
 
     async def acall(self, *args, **kwargs):
+        # NOOA defaults this to an internal agent ID and mirrors it into a header.
+        # Keep routing identifiers local, across all provider API styles.
+        kwargs.pop("prompt_cache_key", None)
         from nooa.agents.summarization import summary_fork_active
 
         from .provider_stream import reply_channel

@@ -16,6 +16,9 @@ class TrackedReflexion(ReflexionStrategy):
     async def python_cell_state_context(self, runtime):
         return await self.base.python_cell_state_context(runtime)
 
+    async def sandbox_context(self, runtime):
+        return await self.base.sandbox_context(runtime)
+
     async def _reflect(self, runtime, call, result):
         verdict = await super()._reflect(runtime, call, result)
         runtime.agent._reflection_verdicts.append(verdict.model_dump())

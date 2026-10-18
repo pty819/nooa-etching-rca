@@ -7,5 +7,6 @@
   "summary_threshold": null,
   "preserve_recent": 10,
   "summary_target_chars": 8000,
-  "request_timeout": 1800
+  "request_timeout": 1800,
+  "review_provider": "auto"
 }

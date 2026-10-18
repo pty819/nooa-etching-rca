@@ -91,7 +91,9 @@ MEANS = """def extract(trace, steps, params):
 """
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="actual macOS worker isolation")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="enforced execution backend required"
+)
 def test_fusion_ranking_versions_replay_failures_and_handoff(tmp_path):
     async def exercise():
         lab = fixture_case(tmp_path / "case")
@@ -188,7 +190,7 @@ def test_fixed_input_and_group_protocol(tmp_path):
         lab.create(FormulaPlan(title="leak", labels=["good", "bad"]))
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="OS boundary")
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="OS boundary")
 def test_feature_worker_cannot_read_case_labels_even_under_temp(tmp_path):
     async def exercise():
         lab = fixture_case(tmp_path / "case")
@@ -239,7 +241,9 @@ def test_postcondition_requires_formula_handoff_and_final_is_host_appended(tmp_p
         events.close()
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="native CodeAct + actual worker")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="native CodeAct + actual worker"
+)
 def test_native_codeact_tools_and_readonly_reflection(tmp_path):
     from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall
 
@@ -287,7 +291,7 @@ return_result(ResearchReply(summary='已比较并重算专家融合公式', form
     asyncio.run(exercise())
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="actual scientific worker")
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="actual scientific worker")
 def test_other_tree_models_and_nondeterministic_replay_are_not_faked(tmp_path):
     async def exercise():
         lab = fixture_case(tmp_path / "trees")
@@ -335,7 +339,7 @@ def test_formula_api_and_downloads_do_not_execute_model_files(tmp_path):
 
     async def exercise():
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://test"
+            transport=httpx.ASGITransport(app=app), base_url="http://localhost"
         ) as client:
             response = await client.get("/api/sessions/case/formula-lab")
             assert (
@@ -352,7 +356,7 @@ def test_formula_api_and_downloads_do_not_execute_model_files(tmp_path):
     asyncio.run(exercise())
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="actual retry worker")
+@pytest.mark.skipif(sys.platform not in {"darwin", "linux"}, reason="actual retry worker")
 def test_duplicate_claim_cancel_and_resume_preserve_attempts(tmp_path):
     async def exercise():
         lab = fixture_case(tmp_path / "case")
@@ -418,7 +422,9 @@ def test_formula_gate_is_turn_scoped_and_budget_ignores_historical_studies(tmp_p
     assert FormulaLab(lab.run).handoff(None) is None
 
 
-@pytest.mark.skipif(sys.platform != "darwin", reason="native CodeAct and actual plotting worker")
+@pytest.mark.skipif(
+    sys.platform not in {"darwin", "linux"}, reason="native CodeAct and actual plotting worker"
+)
 def test_native_plot_only_turn_with_unfinished_historical_formula_study(tmp_path):
     from nooa.unifiedllm import FakeLLMClient, LLMResponse, ToolCall
 
@@ -428,7 +434,7 @@ def test_native_plot_only_turn_with_unfinished_historical_formula_study(tmp_path
 
     lab = fixture_case(tmp_path / "case")
     lab.create(FormulaPlan(title="historical pending work", labels=["good", "bad"]))
-    plotting = "import polars as pl\nimport matplotlib.pyplot as plt\nx=pl.read_parquet('../input/traces/dev-good-0-0.parquet')\nplt.plot(x['time_s'],x['a'])\nplt.savefig('artifacts/simple-plot.png')"
+    plotting = "import polars as pl\nimport matplotlib.pyplot as plt\nx=pl.read_parquet(DATASET/'traces/dev-good-0-0.parquet')\nplt.plot(x['time_s'],x['a'])\nplt.savefig('artifacts/simple-plot.png')"
     code = (
         "old = await self.read_formula_study()\n"
         + f"execution = await self.run_code({plotting!r})\n"

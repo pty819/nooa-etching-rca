@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import socket
 import threading
 import time
@@ -47,7 +48,8 @@ class FakeProvider:
 
     async def complete(self, request: Request):
         body = await request.json()
-        identity = request.headers.get("x-research-agent", "main")
+        role = re.search(r'"agent_id":\s*"([^"\n]+)",\s*"can_spawn"', str(body.get("messages", [])))
+        identity = role.group(1) if role else "main"
         self.calls.append((identity, body))
         self.active += 1
         self.peak = max(self.peak, self.active)
@@ -80,7 +82,7 @@ class FakeProvider:
                         }
                     ],
                 }
-                code = f"print(await self.write_file('artifacts/evidence.csv', 'run_id,value\\nr1,{value}\\n'))\nprint(await self.run_code(\"import polars as pl, time\\nprint(pl.read_parquet('../input/runs.parquet').shape)\\ntime.sleep(.15)\\nprint('WORKER_DONE')\"))\nreturn_result({candidate!r})"
+                code = f"print(await self.write_file('artifacts/evidence.csv', 'run_id,value\\nr1,{value}\\n'))\nprint(await self.run_code(\"import polars as pl, time\\nprint(pl.read_parquet(DATASET/'runs.parquet').shape)\\ntime.sleep(.15)\\nprint('WORKER_DONE')\"))\nreturn_result({candidate!r})"
             if self.cancel_branch and identity == "main":
                 code = code.replace(
                     "results=await", "print(await self.cancel_research(a['id']))\nresults=await"
@@ -195,10 +197,16 @@ def endpoint(monkeypatch):
     running = []
 
     def create(
-        parallel=False, revision=False, fail_branch=False, cancel_branch=False, invalid_review=False,
+        parallel=False,
+        revision=False,
+        fail_branch=False,
+        cancel_branch=False,
+        invalid_review=False,
         visualization=False,
     ):
-        fake = FakeProvider(parallel, revision, fail_branch, cancel_branch, invalid_review, visualization)
+        fake = FakeProvider(
+            parallel, revision, fail_branch, cancel_branch, invalid_review, visualization
+        )
         sock = socket.socket()
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
@@ -213,6 +221,9 @@ def endpoint(monkeypatch):
         monkeypatch.setenv("FACTOR_API_BASE", f"http://127.0.0.1:{port}/v1")
         monkeypatch.setenv("FACTOR_API_STYLE", "openai")
         monkeypatch.setenv("FACTOR_API_KEY", "fake-test-only")
+        monkeypatch.setenv("FACTOR_REVIEW_MODEL", "fixture-review-model")
+        monkeypatch.setenv("FACTOR_REVIEW_API_BASE", f"http://127.0.0.1:{port}/v1")
+        monkeypatch.setenv("FACTOR_REVIEW_API_KEY", "fake-test-only")
         running.append((server, thread))
         return fake
 
@@ -224,7 +235,7 @@ def endpoint(monkeypatch):
 
 def settings(tmp_path):
     file = tmp_path / "runtime.json"
-    file.write_text(RuntimeSettings().model_dump_json())
+    file.write_text(RuntimeSettings(review_provider="custom-review").model_dump_json())
     return file
 
 
@@ -257,7 +268,10 @@ def test_review_revises_and_keeps_immutable_evidence(endpoint, tmp_path):
         and budget["charged_tokens"] > 0
         and budget["reserved_tokens"] == 0
     )
-    assert any(not body.get("tools") and not body.get("response_format") for _, body in fake.calls)
+    assert all(body.get("tools") or body.get("response_format") for _, body in fake.calls)
+    assert (
+        result["reviewer_independent_model"] and result["reviewer_model"] == "fixture-review-model"
+    )
     assert "model.start" in {e["type"] for e in LiveEvents(run).since(0, 10000)}
 
 
@@ -373,7 +387,8 @@ def test_call_cap_preserves_checked_checkpoint_with_explicit_unreviewed_status(e
         e["type"] == "reply.commit" and e["data"]["review_status"] == "budget_exhausted"
         for e in entries
     )
-    assert any(e["type"] == "budget.delivery_fallback" for e in entries)
+    assert result["delivery_status"] == "delivered"
+    assert not any(e["type"] == "budget.delivery_fallback" for e in entries)
 
 
 def test_budget_before_first_report_delivers_honest_checkpoint(endpoint, tmp_path):

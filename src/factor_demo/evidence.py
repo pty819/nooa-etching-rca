@@ -29,6 +29,7 @@ class EvidenceVerifier:
             if (self.run / "branch.json").is_file()
             else self.run
         )
+        self.root = root
         if (root / ".datasets/registry.sqlite").exists():
             from .datasets import DatasetRegistry
 
@@ -85,6 +86,10 @@ class EvidenceVerifier:
         return runs
 
     def verify(self, report: ResearchReply):
+        if self.registry is None and (self.root / ".datasets/registry.sqlite").exists():
+            return EvidenceVerifier(
+                self.run, self.events, report.dataset_ref or self.dataset_ref
+            ).verify(report)
         if report.dataset_ref and report.dataset_ref != self.dataset_ref:
             return EvidenceVerifier(self.run, self.events, report.dataset_ref).verify(report)
         runs = self.scope()
@@ -182,6 +187,31 @@ class EvidenceVerifier:
                 match = type(actual) == type(e.value) and actual == e.value
             if not match:
                 self.fail(f"{e.id}: claimed {e.value!r}, saved-table calculation is {actual!r}")
+            from .execution_provenance import artifact_proof
+            from .live_events import branch_path
+            from .trusted_evidence import verify_proof
+
+            owner_run = self.run
+            local_name = e.artifact
+            parts = Path(e.artifact).parts
+            if len(parts) > 2 and parts[0] == "branches":
+                owner_run = branch_path(self.run, parts[1])
+                local_name = str(Path(*parts[2:]))
+            try:
+                if e.proof_id:
+                    local_evidence = e.model_copy(update={"artifact": local_name})
+                    proof = verify_proof(owner_run, local_evidence)
+                else:
+                    proof = artifact_proof(owner_run, local_name, e.execution_ref)
+                    if proof["dataset_ref"] != (e.dataset_ref or self.dataset_ref):
+                        raise ValueError("Execution and evidence dataset scopes differ")
+                    proof = {
+                        "grade": "exploratory_reproducible",
+                        "execution_ref": proof["execution_ref"],
+                        "source_sha256": proof["source_sha256"],
+                    }
+            except (ValueError, OSError) as error:
+                self.fail(f"{e.id}: {error}")
             checks.append(
                 {
                     "id": e.id,
@@ -194,6 +224,7 @@ class EvidenceVerifier:
                     "unit": e.unit,
                     "sha256": sha,
                     "dataset_ref": e.dataset_ref or self.dataset_ref,
+                    "provenance": proof,
                 }
             )
         for h in report.hypotheses:
@@ -201,6 +232,65 @@ class EvidenceVerifier:
                 self.fail(f"{h.id}: unknown evidence_ids")
             if h.status in {"supported", "weak"} and not h.evidence_ids:
                 self.fail(f"{h.id}: supporting claims need structured evidence_ids")
+        verified_by_id = {c["id"]: c for c in checks}
+        hypothesis_checks = {}
+        import operator
+
+        comparisons = {
+            "lt": operator.lt,
+            "le": operator.le,
+            "gt": operator.gt,
+            "ge": operator.ge,
+            "eq": operator.eq,
+            "abs_le": lambda a, b: abs(a) <= b,
+            "abs_gt": lambda a, b: abs(a) > b,
+        }
+        for h in report.hypotheses:
+            completed = []
+            for check in h.checks:
+                if check.status != "completed":
+                    continue
+                if check.evidence_id not in verified_by_id or (
+                    check.subtract_evidence_id and check.subtract_evidence_id not in verified_by_id
+                ):
+                    self.fail(f"{h.id}: check refers to unknown evidence")
+                left = verified_by_id[check.evidence_id]
+                related = [left]
+                value = left["actual"]
+                if check.subtract_evidence_id:
+                    right = verified_by_id[check.subtract_evidence_id]
+                    related.append(right)
+                    if left["unit"] != right["unit"]:
+                        self.fail(f"{h.id}: check subtracts different units")
+                    value -= right["actual"]
+                if any(
+                    r["provenance"]["grade"] not in {"raw_recomputed", "formula_recomputed"}
+                    for r in related
+                ):
+                    self.fail(f"{h.id}: completed checks require independently recomputed evidence")
+                if not isinstance(value, (int, float)) or not math.isfinite(value):
+                    self.fail(f"{h.id}: check needs a finite numerical value")
+                passed = comparisons[check.operator](value, check.threshold)
+                completed.append(
+                    {
+                        "description": check.description,
+                        "value": value,
+                        "operator": check.operator,
+                        "threshold": check.threshold,
+                        "passed": passed,
+                    }
+                )
+            if h.status == "supported" and (
+                not completed or not all(c["passed"] for c in completed)
+            ):
+                self.fail(
+                    f"{h.id}: supported requires completed, recomputed checks; otherwise use weak/unresolved"
+                )
+            if h.status == "rejected" and (not completed or all(c["passed"] for c in completed)):
+                self.fail(
+                    f"{h.id}: rejected requires a completed failed check; otherwise use unresolved"
+                )
+            hypothesis_checks[h.id] = completed
         if self.events:
             self.events.emit("validation.passed", checks=len(checks), files=len(paths))
         return {
@@ -208,6 +298,7 @@ class EvidenceVerifier:
             "dataset_ref": self.dataset_ref,
             "public_runs": len(public_ids),
             "checks": checks,
+            "hypothesis_checks": hypothesis_checks,
             "hypotheses": len(report.hypotheses),
             "limits": "Checks verify public scope and saved-table references, not the correctness of arbitrary transformations, sensor calibration or causal truth.",
         }
@@ -229,8 +320,14 @@ def research_postcondition(agent, result, call):
         datasets = getattr(agent, "_datasets", None)
         if datasets is not None and result.dataset_ref is None:
             result.dataset_ref = datasets.current()["id"]
-        if result.intent=="visualization" and (result.hypotheses or result.formula_comparison or (getattr(agent,"_formula_lab",None) and agent._formula_lab.active())):
-            raise EvidenceError("Visualization-only delivery cannot include hypotheses or active formula selection; use report/comparison intent")
+        if result.intent == "visualization" and (
+            result.hypotheses
+            or result.formula_comparison
+            or (getattr(agent, "_formula_lab", None) and agent._formula_lab.active())
+        ):
+            raise EvidenceError(
+                "Visualization-only delivery cannot include hypotheses or active formula selection; use report/comparison intent"
+            )
         manager = getattr(agent, "_manager", None)
         if manager is not None and any(
             row["mission"] == manager.mission

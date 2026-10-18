@@ -41,7 +41,7 @@ export function useResearch() {
     panel: window.innerWidth >= 1100,
     newDialog: false,
     newTitle: "腔室 A · 配方一致性研究",
-    dataset: "etching-v2",
+    dataset: "etching-v3",
     eventCount: 0,
     newBelow: false,
     pending: false,
@@ -295,7 +295,7 @@ export function useResearch() {
           break;
         }
         case "reflection.end": {
-          (s.notices[agentId] ??= []).push('局部反思结束：' + (d.status === 'passed' ? '检查通过' : d.status === 'budget_exhausted' ? '预算耗尽，未通过' : '中断，已有记录保留'));
+          (s.notices[agentId] ??= []).push('局部反思结束：' + (d.status === 'passed' ? '检查通过' : d.status === 'budget_exhausted' ? '预算耗尽，未通过' : d.status === 'not_satisfactory' ? '反思轮次结束，仍需补证' : '中断，已有记录保留'));
           break;
         }
         case "budget.usage":

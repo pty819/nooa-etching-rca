@@ -68,9 +68,8 @@ def check():
             re.search(pattern, data) for pattern in patterns
         ):
             failures.append({"path": name, "rule": "credential literal"})
-        if (
-            path.suffix in {".py", ".md", ".rst", ".inc", ".json", ".yml"}
-            and re.search(b"/" + b"Users" + rb"/[^/\s]+/", data)
+        if path.suffix in {".py", ".md", ".rst", ".inc", ".json", ".yml"} and re.search(
+            b"/" + b"Users" + rb"/[^/\s]+/", data
         ):
             failures.append({"path": name, "rule": "personal absolute path"})
     print(

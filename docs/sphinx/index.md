@@ -28,9 +28,9 @@
 | 公式比较 | 任意原始序列算子、版本、固定lot验证与模型比较、最佳重跑及强制交接 |
 | 可靠性 | 前后置校验、LoopGuard、Predict审查、最多两次定向修订 |
 | 并行 | 主研究动态派生独立分支；默认两个分支活跃 |
-| 预算 | 每轮主/子研究、摘要、审查、正文共用原生AdmissionBroker及token账本 |
+| 预算 | 每轮主/子研究、摘要、审查共用原生AdmissionBroker及token账本 |
 | 前端 | Vue 3、TypeScript、Vite；持久SSE、Markdown、PNG与CSV表格 |
-| 平台 | 文档跨平台；当前自由代码执行器要求macOS sandbox-exec |
+| 平台 | macOS sandbox-exec；Linux Landlock/seccomp，缺少机制时拒绝执行 |
 
 NOOA依赖固定在 `1454b78c8f0a85c97eab1c6a91cc8cfc95b34de5`，没有修改上游vendor。研究运行配置为272000总上下文、50000输出上限，自动摘要阈值177600。实际值可在[自动生成的配置参考](_generated/contracts.md)检查。
 
@@ -67,6 +67,7 @@ streaming
 :caption: 工程与验收
 
 security
+audit-remediation
 operations
 validation
 case-study

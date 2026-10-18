@@ -444,7 +444,8 @@ def simulate_run(
                 chemistry.balance_error,
             ]
             row_index += 1
-    # Correlated measurement errors, not independent synthetic feature columns.
+    # Temporally correlated measurement noise, sampled per channel; statistics
+    # subsequently share these physical traces. No cross-channel noise covariance.
     floors = {
         "W": 0.08,
         "V": 0.02,

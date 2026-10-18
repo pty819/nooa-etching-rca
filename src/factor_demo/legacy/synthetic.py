@@ -3,27 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
-import os
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from ..io_utils import write_json
+
 METADATA = ["timestamp", "site_id", "recipe_id", "chamber_id"]
 STATS = ["mean", "std", "min", "max"]
-
-
-def write_json(path: Path, data: object) -> None:
-    content = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as f:
-        temporary = Path(f.name)
-        f.write(content)
-    try:
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
 
 
 def generate(directory: Path, rows: int = 2400, seed: int = 42) -> dict:
@@ -37,12 +25,16 @@ def generate(directory: Path, rows: int = 2400, seed: int = 42) -> dict:
     rng.shuffle(labels)
     recipe = rng.integers(0, 3, rows)
     chamber = rng.integers(0, 4, rows)
-    feature_names = [f"sensor_{s:03d}__step_{t:02d}__{stat}"
-                     for s in range(100) for t in range(1, 6) for stat in STATS]
+    feature_names = [
+        f"sensor_{s:03d}__step_{t:02d}__{stat}"
+        for s in range(100)
+        for t in range(1, 6)
+        for stat in STATS
+    ]
     x = rng.normal(size=(rows, 2000))
     # Stable sensor/recipe offsets, independent of label, provide redundant context.
     for s in range(100):
-        x[:, s * 20:(s + 1) * 20] += (recipe * 0.35 + chamber * 0.15)[:, None]
+        x[:, s * 20 : (s + 1) * 20] += (recipe * 0.35 + chamber * 0.15)[:, None]
     a_sensor, b_sensor, nuisance_sensor = rng.choice(100, 3, replace=False).tolist()
     raw = f"sensor_{a_sensor:03d}__step_02__mean"
     before = f"sensor_{b_sensor:03d}__step_02__mean"
@@ -60,28 +52,58 @@ def generate(directory: Path, rows: int = 2400, seed: int = 42) -> dict:
     x[:, feature_names.index(nuisance)] = spur
     x[rng.random(x.shape) < 0.003] = np.nan
     features = pd.DataFrame(x.astype("float32"), columns=feature_names)
-    meta = pd.DataFrame({"timestamp": pd.date_range("2026-01-01", periods=rows, freq="h"),
-                         "site_id": [f"site_{v}" for v in rng.integers(0, 2, rows)],
-                         "recipe_id": [f"recipe_{v}" for v in recipe],
-                         "chamber_id": [f"chamber_{v}" for v in chamber],
-                         "label": [f"label{v + 1}" for v in labels]})
+    meta = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=rows, freq="h"),
+            "site_id": [f"site_{v}" for v in rng.integers(0, 2, rows)],
+            "recipe_id": [f"recipe_{v}" for v in recipe],
+            "chamber_id": [f"chamber_{v}" for v in chamber],
+            "label": [f"label{v + 1}" for v in labels],
+        }
+    )
     df = pd.concat([meta, features], axis=1)
     df.index = pd.Index([f"run_{i:06d}" for i in range(rows)], name="run_id")
-    parts = {"train": df.iloc[:train_end], "dev": df.iloc[train_end:dev_end],
-             "test": df.iloc[dev_end:]}
+    parts = {
+        "train": df.iloc[:train_end],
+        "dev": df.iloc[train_end:dev_end],
+        "test": df.iloc[dev_end:],
+    }
     for name, part in parts.items():
         part.to_parquet(directory / f"{name}.parquet")
-    catalog = [{"name": f, "sensor": f.split("__")[0], "step": f.split("__")[1],
-                "statistic": f.split("__")[2], "modality": ["thermal", "pressure", "electrical"][i // 20 % 3],
-                "unit": "synthetic_unit"} for i, f in enumerate(feature_names)]
+    catalog = [
+        {
+            "name": f,
+            "sensor": f.split("__")[0],
+            "step": f.split("__")[1],
+            "statistic": f.split("__")[2],
+            "modality": ["thermal", "pressure", "electrical"][i // 20 % 3],
+            "unit": "synthetic_unit",
+        }
+        for i, f in enumerate(feature_names)
+    ]
     write_json(directory / "catalog.json", catalog)
-    manifest = {"schema_version": 1, "seed": seed, "rows": rows, "features": 2000,
-                "metadata": METADATA, "label": "label", "split": "chronological 60/20/20",
-                "batch_size": 20, "counts": {k: len(v) for k, v in parts.items()},
-                "sha256": {k: hashlib.sha256((directory / f"{k}.parquet").read_bytes()).hexdigest()
-                           for k in parts}}
+    manifest = {
+        "schema_version": 1,
+        "seed": seed,
+        "rows": rows,
+        "features": 2000,
+        "metadata": METADATA,
+        "label": "label",
+        "split": "chronological 60/20/20",
+        "batch_size": 20,
+        "counts": {k: len(v) for k, v in parts.items()},
+        "sha256": {
+            k: hashlib.sha256((directory / f"{k}.parquet").read_bytes()).hexdigest() for k in parts
+        },
+    }
     write_json(directory / "manifest.json", manifest)
-    write_json(directory / "truth.private.json", {"raw_signal": raw,
-               "difference": {"operation": "difference", "columns": [after, before]},
-               "unstable_signal": nuisance, "meaning": "Synthetic associations, not physical causes"})
+    write_json(
+        directory / "truth.private.json",
+        {
+            "raw_signal": raw,
+            "difference": {"operation": "difference", "columns": [after, before]},
+            "unstable_signal": nuisance,
+            "meaning": "Synthetic associations, not physical causes",
+        },
+    )
     return manifest

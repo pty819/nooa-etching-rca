@@ -153,7 +153,10 @@ def test_branch_input_is_shared_but_workspace_and_evidence_are_scoped(tmp_path):
     assert store.get("research-a")["state"] == "interrupted"
 
 
-@pytest.mark.skipif(__import__("sys").platform != "darwin", reason="macOS worker policy")
+@pytest.mark.skipif(
+    __import__("sys").platform not in {"darwin", "linux"},
+    reason="enforced execution backend required",
+)
 def test_branch_worker_cannot_read_sibling_or_parent_even_under_tmp(tmp_path):
     from factor_demo.research_workspace import PythonWorkspace
 
@@ -165,7 +168,7 @@ def test_branch_worker_cannot_read_sibling_or_parent_even_under_tmp(tmp_path):
         worker = PythonWorkspace(branch)
         try:
             result = await worker.execute(
-                "from pathlib import Path\nimport polars as pl\nprint(pl.read_parquet('../input/runs.parquet').height)\ntry: Path("
+                "from pathlib import Path\nimport polars as pl\nprint(pl.read_parquet(DATASET/'runs.parquet').height)\ntry: Path("
                 + repr(str(root / "workspace/artifacts/parent-secret.txt"))
                 + ").read_text()\nexcept PermissionError: print('PARENT_DENIED')\nelse: raise AssertionError('parent became readable')"
             )

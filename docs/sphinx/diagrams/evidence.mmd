@@ -3,7 +3,8 @@ flowchart TB
   S --> P[规范化产物路径与符号链接检查]
   P --> C[CSV或Parquet列与where选择]
   C --> N[单值或明确聚合的数值复核]
-  N --> H[run集合、证据ID、假设引用]
+  N --> G["成功cell来源与等级<br/>原始值/模型指标独立重算"]
+  G --> H[run集合、证据ID、假设引用]
   H --> F[冻结当前修订文件与哈希]
   F --> Q[Predict审查证据包]
   Q --> K{审查引用本身有效？}
@@ -15,4 +16,5 @@ flowchart TB
   J -->|否| OK[passed：可含warning]
   J -->|是且可修订| RV[revise后重新核验]
   RV --> S
-  J -->|次数或模型预算耗尽| EX[budget_exhausted：交接受限结果]
+  J -->|修订次数用完| EX[revision_limit：受限检查点]
+  J -->|模型预算耗尽| BX[budget_exhausted：受限检查点]

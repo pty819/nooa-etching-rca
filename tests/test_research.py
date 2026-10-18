@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from factor_demo.cli import finalize
-from factor_demo.factors import Factor, transform
-from factor_demo.research import Research
-from factor_demo.synthetic import generate, write_json
+from factor_demo.legacy.cli import finalize
+from factor_demo.legacy.factors import Factor, transform
+from factor_demo.legacy.research import Research
+from factor_demo.legacy.synthetic import generate, write_json
 
 
 @pytest.fixture
@@ -53,14 +53,23 @@ def test_signal_generalization_budget_and_resume(data, tmp_path):
     assert len(r.records) == 1
     bad = r.evaluate([{"name": "leak", "operation": "raw", "columns": ["label"]}], "Invalid")
     assert bad["status"] == "failed"
-    unstable = r.evaluate([{"name": "spur", "operation": "raw", "columns": [truth["unstable_signal"]]}], "Check generalization")
+    unstable = r.evaluate(
+        [{"name": "spur", "operation": "raw", "columns": [truth["unstable_signal"]]}],
+        "Check generalization",
+    )
     assert unstable["metrics"]["train_balanced_accuracy"] > 0.90
     assert unstable["metrics"]["balanced_accuracy"] < 0.35
     assert r.evaluate([factor], "No remaining budget")["status"] == "budget_exhausted"
     resumed = Research(data, run, 5)
     assert len(resumed.records) == 3 and resumed.best()["id"] == first["id"]
-    write_json(run / "conclusion.json", {"selected_experiment_id": first["id"],
-               "summary": "Test fixture conclusion", "limitations": ["Synthetic only"]})
+    write_json(
+        run / "conclusion.json",
+        {
+            "selected_experiment_id": first["id"],
+            "summary": "Test fixture conclusion",
+            "limitations": ["Synthetic only"],
+        },
+    )
     final = finalize(run)
     assert final["holdout"]["balanced_accuracy"] > 0.90
     assert final["synthetic_truth_check"]["contains_injected_difference"]
@@ -71,7 +80,7 @@ def test_signal_generalization_budget_and_resume(data, tmp_path):
 
 
 def test_preprocessing_is_fit_on_training_only(data, tmp_path):
-    from factor_demo.research import fit_model
+    from factor_demo.legacy.research import fit_model
 
     x = np.array([[0.0], [2.0], [np.nan], [4.0], [3.0], [1.0]])
     y = pd.Series(["label1", "label2", "label3", "label1", "label2", "label3"])
