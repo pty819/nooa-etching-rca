@@ -7,6 +7,28 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+def public_study(study):
+    """Saved report projection; viewing metadata never loads the numerical engine."""
+    study.setdefault("replays", [])
+    return {
+        key: study[key]
+        for key in (
+            "id",
+            "owner",
+            "created",
+            "plan",
+            "formulas",
+            "sets",
+            "trials",
+            "selections",
+            "replays",
+            "selection_id",
+            "revision",
+            "limits",
+        )
+    }
+
+
 class StudyStore:
     def __init__(self, base: Path):
         self.base = base
@@ -53,6 +75,9 @@ class StudyStore:
             return [
                 json.loads(row[0]) for row in db.execute("SELECT body FROM studies ORDER BY id")
             ]
+
+    def catalog(self):
+        return [public_study(study) for study in self.list()]
 
     def recent(self, limit=5):
         if not (self.base / "registry.sqlite").exists():

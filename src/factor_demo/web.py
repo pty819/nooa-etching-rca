@@ -25,6 +25,7 @@ from .io_utils import write_json
 from .live_events import LiveEvents, branch_path, public_artifact_index, public_artifact_path
 from .research_branches import BranchStore
 from .research_workspace import prepare_workspace
+from .study_store import StudyStore
 
 
 class NewSession(BaseModel):
@@ -286,16 +287,13 @@ def create_app(project: Path | None = None) -> FastAPI:
             "branches": BranchStore(run).list(),
             "last_event_id": last_id,
             "dataset_state": data_state,
-            "formula_studies": __import__("factor_demo.formula_lab", fromlist=["FormulaLab"])
-            .FormulaLab(run)
-            .catalog(),
+            "formula_studies": await asyncio.to_thread(StudyStore(run / ".formula-lab").catalog),
         }
 
     @app.get("/api/sessions/{name}/formula-lab")
     async def formula_lab(name):
-        from .formula_lab import FormulaLab
-
-        return {"studies": FormulaLab(session(name)).catalog()}
+        store = StudyStore(session(name) / ".formula-lab")
+        return {"studies": await asyncio.to_thread(store.catalog)}
 
     async def execute(run, body, job):
         events = LiveEvents(run, body.request_id)

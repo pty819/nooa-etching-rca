@@ -150,27 +150,12 @@ class FormulaLab:
             self.events.emit("formula." + kind, study_id=study_id, **data)
 
     def catalog(self):
-        return [self.public(s) for s in self.store.list()]
+        return self.store.catalog()
 
     def public(self, study):
-        study.setdefault("replays", [])
-        return {
-            k: study[k]
-            for k in [
-                "id",
-                "owner",
-                "created",
-                "plan",
-                "formulas",
-                "sets",
-                "trials",
-                "selections",
-                "replays",
-                "selection_id",
-                "revision",
-                "limits",
-            ]
-        }
+        from .study_store import public_study
+
+        return public_study(study)
 
     def bound(self):
         return [s for s in self.catalog() if self.owner in s["plan"]["participants"]]
