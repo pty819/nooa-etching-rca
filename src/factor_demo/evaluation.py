@@ -53,7 +53,11 @@ def prepare_evaluation(source: Path, run: Path):
     for name in targets[schema.asset_column]:
         target = private / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(safe_path(source, name), target)
+        asset = safe_path(source, name, directory=True)
+        if asset.is_dir():
+            shutil.copytree(asset, target)
+        else:
+            shutil.copyfile(asset, target)
     if schema.steps_file:
         step = pl.read_parquet(safe_path(source, schema.steps_file))
         identity = schema.id_column if schema.id_column in step.columns else "run_id"

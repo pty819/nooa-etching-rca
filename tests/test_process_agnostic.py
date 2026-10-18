@@ -119,7 +119,8 @@ def test_profile_cannot_load_arbitrary_paths():
         DatasetSchema(knowledge_profile="../../private")
 
 
-def test_private_assessment_uses_declared_identity_and_holdout_roles(tmp_path):
+@pytest.mark.parametrize("directory_asset", [False, True])
+def test_private_assessment_uses_declared_identity_and_holdout_roles(tmp_path, directory_asset):
     from factor_demo.evaluation import prepare_evaluation
 
     source = tmp_path / "source"
@@ -127,12 +128,17 @@ def test_private_assessment_uses_declared_identity_and_holdout_roles(tmp_path):
     (source / "truth.private").mkdir()
     (source / "traces").mkdir()
     pl.DataFrame({"temperature": [300.0, 301.0]}).write_parquet(source / "traces/wafer.parquet")
+    asset = "traces/wafer.parquet"
+    if directory_asset:
+        (source / "traces/object").mkdir()
+        (source / "traces/wafer.parquet").rename(source / "traces/object/sensor.parquet")
+        asset = "traces/object"
     pl.DataFrame(
         {
             "wafer_key": ["held-wafer"],
             "condition": ["stable"],
             "partition": ["sealed"],
-            "telemetry": ["traces/wafer.parquet"],
+            "telemetry": [asset],
         }
     ).write_csv(source / "lots.csv")
     schema = DatasetSchema(
@@ -153,6 +159,37 @@ def test_private_assessment_uses_declared_identity_and_holdout_roles(tmp_path):
     assert pl.read_parquet(run / ".evaluation/input/runs.parquet")["wafer_key"].to_list() == [
         "held-wafer"
     ]
+    assert (run / ".evaluation/input" / asset).exists()
+
+
+def test_switching_dataset_refreshes_and_retires_the_explicit_domain_pack(tmp_path):
+    from test_capabilities import public_case
+
+    root = public_case(tmp_path / "case")
+    schema = DatasetSchema(index_file="runs.parquet", id_column="run_id", knowledge_profile="etch")
+    (root / "input/dataset.json").write_text(json.dumps({"schema": schema.model_dump()}))
+
+    async def exercise():
+        agent = AutoresearchAgent(PythonWorkspace(root), llm=FakeLLMClient())
+        try:
+            install_research_context(agent, "切换到其他工艺数据表示")
+            original = agent._datasets.current()["id"]
+            child = agent._datasets.registry.register(
+                root / "input",
+                schema.model_copy(update={"knowledge_profile": None}),
+                "generic representation",
+                parents=[original],
+                reason="explicit scope change",
+                relation="transform",
+            )
+            await agent.select_dataset(child["id"])
+            assert "domain.domain_rules" not in agent._knowledge_registry.activated()
+            await agent.return_dataset("root")
+            assert "domain.domain_rules" in agent._knowledge_registry.activated()
+        finally:
+            await agent.aclose()
+
+    asyncio.run(exercise())
 
 
 def test_an_untyped_hardware_file_never_implies_etch_truth(tmp_path):

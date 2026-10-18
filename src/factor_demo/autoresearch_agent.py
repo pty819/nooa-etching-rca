@@ -194,6 +194,9 @@ class AutoresearchAgent(Agent):
             if select:
                 await self._workspace.close()
                 self._datasets.select(doc["id"])
+                from .research_context import refresh_domain_context
+
+                refresh_domain_context(self)
             return doc
 
     async def select_dataset(self, dataset_ref: str) -> dict:
@@ -205,7 +208,11 @@ class AutoresearchAgent(Agent):
         await self._writable()
         async with self._workspace.lock:
             await self._workspace.close()
-            return self._datasets.select(dataset_ref)
+            result = self._datasets.select(dataset_ref)
+            from .research_context import refresh_domain_context
+
+            refresh_domain_context(self)
+            return result
 
     async def return_dataset(self, target: str = "parent") -> dict:
         """Return to the previous scope, or target='root' for this agent's bound root."""
@@ -214,7 +221,11 @@ class AutoresearchAgent(Agent):
             raise ValueError("Choose parent or root")
         async with self._workspace.lock:
             await self._workspace.close()
-            return self._datasets.select(back=target)
+            result = self._datasets.select(back=target)
+            from .research_context import refresh_domain_context
+
+            refresh_domain_context(self)
+            return result
 
     async def request_data(self, request: AcquisitionRequest) -> dict:
         """Request additional entries through the future unified acquisition interface.
