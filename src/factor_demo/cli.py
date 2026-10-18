@@ -17,7 +17,7 @@ def main():
         sys.argv = [sys.argv[0], *sys.argv[2:]]
         return legacy_main()
     parser = argparse.ArgumentParser(
-        description="NOOA raw-data research and reproducible etching evaluation"
+        description="NOOA schema-driven industrial data research and explicit simulation benchmarks"
     )
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("doctor")
@@ -53,7 +53,7 @@ def main():
         p = sub.add_parser(name, aliases=aliases)
         p.add_argument("--run", type=Path, required=True)
         if name == "research":
-            p.add_argument("--data", type=Path, default=Path("data/etching-v3"))
+            p.add_argument("--data", type=Path, required=True)
         p.add_argument("--provider", default="glm")
         p.add_argument("--message", default="")
         p.add_argument("--message-file", type=Path)

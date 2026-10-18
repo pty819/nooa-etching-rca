@@ -62,9 +62,9 @@ aeon集合输入通常有case/channel/time三个维度；具体方法必须核�
 
 worker为Numba JIT和joblib临时文件指定自身workspace下的缓存路径，继续保留文件/网络限制。核心依赖不等于安装了所有可选extras；遇到缺包先如实说明，由宿主补齐并锁定，不在隔离worker里联网安装。
 
-Agent类文档表达行为契约：以证据产生和修订假设、区分因果层级、使用公开工具、返回结构化引用，并正确理解外层调度环境与科学workspace的区别。领域规则由 `physics` 和 `statistics` 两个TextSkill承载，原生SkillRegistry通过agent.skills接入框架的原生目录表达式，按实例注册；统计技能激活，固定recipe会话才自动激活刻蚀物理技能。核心规则也进入稳定Context，并要求按需读doc(self.statistics/physics)。
+Agent类文档表达行为契约：以证据产生和修订假设、区分因果层级、使用公开工具、返回结构化引用，并正确理解外层调度环境与科学workspace的区别。通用物理与统计规则由 `core.physics` 和 `core.statistics` 两个TextSkill承载，原生SkillRegistry通过agent.skills接入框架的原生目录表达式，按实例注册。`fixed_recipe`只表示数据约束，不选择工艺知识。专用领域包通过schema的`knowledge_profile`显式选择，加载部署目录中已安装的文本技能；未指定时保持通用规则。核心规则也进入稳定Context，并要求按需读doc(self.statistics/physics)。
 
-物理技能强调固定配方、时段两两对比、设定值与联锁/反馈含义，以及不能用不可观测代理排除真实接触问题。统计技能强调lot独立性、监督选择泄漏、OPLS一致变换、有限置换p值下界、恢复率分母和闭环证据依赖。两者不是固定算法脚本，而是研究和审查必须遵守的解释边界。
+通用物理技能强调真实单位、控制回路、守恒关系、延迟、测量原理和可观测性；工艺、配方约束、时段与step来自数据和用户目标。刻蚀术语与仿真候选机制只属于显式选择的`etch`领域包。统计技能强调lot独立性、监督选择泄漏、OPLS一致变换、有限置换p值下界、恢复率分母和闭环证据依赖。两者不是固定算法脚本，而是研究和审查必须遵守的解释边界。
 
 ## Context与自动摘要
 

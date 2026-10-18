@@ -31,7 +31,7 @@ from .study_store import StudyStore
 class NewSession(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(default="腔室匹配研究", max_length=80)
-    dataset: str = "etching-v3"
+    dataset: str
     data_schema: DatasetSchema | None = None
 
 
@@ -156,7 +156,7 @@ def create_app(project: Path | None = None) -> FastAPI:
             "active_agent_id": job.get("agent_id", "main") if job else "main",
             "targets": cfg["discovery_target_runs"],
             "controls": cfg["discovery_control_runs"],
-            "kind": cfg.get("kind", cfg.get("mode", "etching")),
+            "kind": cfg.get("kind", cfg.get("mode", "dynamic_datasets")),
             "updated": (run / "conversation.jsonl").stat().st_mtime
             if (run / "conversation.jsonl").exists()
             else run.stat().st_mtime,
@@ -226,12 +226,7 @@ def create_app(project: Path | None = None) -> FastAPI:
         data = supplied_path(project, body.dataset)
         run = runs / f"case-{time.strftime('%m%d')}-{uuid.uuid4().hex[:8]}"
         try:
-            if (
-                data.is_dir()
-                and (data / "runs.parquet").exists()
-                and (data / "features.parquet").exists()
-                and body.data_schema is None
-            ):
+            if body.data_schema is None:
                 await asyncio.to_thread(prepare_workspace, data, run)
             else:
                 await asyncio.to_thread(prepare_generic_workspace, data, run, body.data_schema)

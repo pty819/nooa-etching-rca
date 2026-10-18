@@ -46,7 +46,7 @@ def review_bundle(report, verification, events=None):
         "report": report.model_dump(),
         "saved_table_verification": verification,
         "host_observed_reflection_events_latest_first": observed,
-        "rubric": "先识别本轮任务及报告实际声明，仅检查适用项目。通用项：证据一致性、数据范围、独立样本粒度、监督选择泄漏、因果越界。仅对涉及的刻蚀/统计声明检查闭环非独立、设定值/瞬态、lot伪重复、OPLS数学一致性、置换和恢复比例。数据划分或计数验收不要求根因推断、建模或OPLS。只给有依据的问题，不重复探索，不强制补与用户任务无关的实验。",
+        "rubric": "先识别本轮任务及报告实际声明，仅检查适用项目。通用项：证据一致性、数据范围、独立样本粒度、监督选择泄漏、因果越界。不预设工艺、传感器、步骤、时段数量或固定配方；只依据实际schema、明确提供的领域资料和报告声明审查物理/统计结论。仅对涉及的声明检查闭环非独立、设定值/瞬态、批次伪重复、OPLS数学一致性、置换和恢复比例。数据划分或计数验收不要求根因推断、建模或OPLS。只给有依据的问题，不重复探索，不强制补与用户任务无关的实验。",
         "scope": "只有这里提供的已保存证据被复核；没有重算的事项不能假装重算。",
         "allowed_claim_ids": [
             "summary",

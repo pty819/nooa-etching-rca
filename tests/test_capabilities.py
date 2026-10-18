@@ -182,7 +182,7 @@ def test_native_hooks_reflexion_and_context_survive_snapshot(tmp_path):
         try:
             install_research_context(agent, "inspect candidates")
             before_cells = len(list((root / "workspace/research_cells").glob("*.py")))
-            assert agent._knowledge_registry.activated() == ["etch.physics", "etch.statistics"]
+            assert agent._knowledge_registry.activated() == ["core.physics", "core.statistics"]
             result = await agent.inspect_candidate(candidate)
             # Confirm the actual NOOA model context advertises the broader stack.
             model_context = str(agent._llm.calls[0].messages)

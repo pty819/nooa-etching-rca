@@ -2,13 +2,13 @@
 
 [![Documentation](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml/badge.svg)](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)
 
-基于 NOOA CodeActV2 的刻蚀腔室异常研究原型：固定配方物理仿真、200路传感器、11个step、22000个派生特征，以及可自由写科学代码的多轮研究 agent。
+基于 NOOA CodeActV2 的工业过程与多模态数据研究原型。核心按数据schema和专家问题执行，可用于不同工艺的数据探索；仓库附带一个固定配方刻蚀仿真案例（200路传感器、11个step、22000个派生特征）。
 
 **[阅读完整需求与设计文档](https://pty819.github.io/nooa-etching-rca/)** · [需求与验收](docs/sphinx/requirements.md) · [系统架构](docs/sphinx/architecture.md) · [Agent设计](docs/sphinx/agents.md) · [算法设计](docs/sphinx/algorithms.md) · [文档自审](docs/sphinx/quality.md)
 
 ## 系统能力
 
-- 以原始曲线、step边界和量测为输入，分别研究正常、严重异常和维修后残留三个时段；recipe保持一致。
+- 按实际数据声明对象、标签、分组、曲线、step、配方和单位；不预设工艺、标签数量、传感器清单或步骤。附带刻蚀案例使用三个业务时段和固定recipe。
 - 通用 Python 执行，可自由组合 Polars、NumPy、SciPy、scikit-learn、aeon、statsmodels、pandas、matplotlib及其他已安装库；Polars仅为表格首选。自主选择统计、时序、OPLS/PCA或其他方法，保留代码、真实输出、失败及修订。
 - [专家公式研究](docs/sphinx/formula-research.md)：原始序列任意Python算子、跨传感器融合、多轮版本、固定lot验证、Logistic/三类树模型、最佳重算与中文排名交接；Vue独立比较页。
 - 原生 LoopGuard、Context/TextSkill、证据前后置校验、Predict 审查与有界定向修订、局部只读 Reflexion。

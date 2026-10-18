@@ -213,6 +213,9 @@ def generate_etching(
         part.to_pandas().set_index("run_id").to_parquet(directory / f"{split}.parquet")
         counts[split] = part.height
     write_json(directory / "truth.private" / "hardware.json", truth_rows)
+    from .etch_evaluation import hardware_truth
+
+    write_json(directory / "truth.private/assessment.json", hardware_truth(directory, meta))
     write_json(
         directory / "truth.private" / "scenario.json",
         {

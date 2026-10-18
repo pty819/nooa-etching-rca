@@ -191,7 +191,7 @@ function statusLabel(value: string) {
         <div>
           <div class="eyebrow"><span />CHAMBER MATCHING</div>
           <h1>让异常，成为可检验的线索。</h1>
-          <p>{{s.meta?.kind==='dynamic_datasets'?'按问题划分数据，逐步验证线索。':'固定配方，比较时段变化。'}}由 agent 研究，由专家审查。</p>
+          <p>按问题划分数据，逐步验证工艺与设备线索。由 agent 研究，由专家审查。</p>
         </div>
         <span :class="['status-pill', { working: s.active }]"
           ><span :class="{ 'live-dot': s.active }" />{{
@@ -202,11 +202,11 @@ function statusLabel(value: string) {
       <div class="facts">
         <span
           ><Activity :size="14" /><b>{{ s.meta?.targets ?? "—" }}</b>
-          {{s.meta?.kind==='dynamic_datasets'?'个样本':'次目标加工'}}</span
+          个研究对象</span
         ><span
           ><FlaskConical :size="14" /><b>{{ s.meta?.controls ?? "—" }}</b>
-          次同期参考</span
-        ><span><i class="tiny-lock" />{{s.meta?.kind==='dynamic_datasets'?'版本与血缘留存':'固定 Recipe'}}</span
+          个参考对象</span
+        ><span><i class="tiny-lock" />版本与血缘留存</span
         ><span class="connection"
           ><i :class="s.connected ? 'connected' : 'disconnected'" />{{
             s.connected ? "实时连接" : "连接恢复中"

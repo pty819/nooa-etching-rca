@@ -30,7 +30,7 @@ def read_table(path: Path) -> pl.DataFrame:
     raise ValueError("Use Parquet, CSV, JSON or JSONL for an index/table")
 
 
-def etching_schema() -> DatasetSchema:
+def fdc_schema() -> DatasetSchema:
     return DatasetSchema(
         modality="timeseries",
         index_file="runs.parquet",
@@ -43,7 +43,7 @@ def etching_schema() -> DatasetSchema:
         step_column="step_id",
         steps_file="steps.parquet",
         recipe_column="recipe_id",
-        fixed_recipe=True,
+        fixed_recipe=False,
         control_column="is_control",
     )
 
@@ -54,7 +54,7 @@ def detect_schema(root: Path) -> DatasetSchema:
             json.loads((root / "dataset.json").read_text())["schema"]
         )
     if (root / "runs.parquet").is_file():
-        schema = etching_schema()
+        schema = fdc_schema()
         columns = pl.read_parquet(root / "runs.parquet", n_rows=0).columns
         updates = {
             name: None

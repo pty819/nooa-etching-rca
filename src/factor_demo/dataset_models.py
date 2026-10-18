@@ -20,6 +20,7 @@ class DatasetSchema(BaseModel):
     steps_file: str | None = None
     recipe_column: str | None = None
     fixed_recipe: bool = False
+    knowledge_profile: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_-]{0,63}$")
     control_column: str | None = None
     train_values: list[str] = Field(default_factory=lambda: ["train"])
     dev_values: list[str] = Field(default_factory=lambda: ["dev", "validation"])

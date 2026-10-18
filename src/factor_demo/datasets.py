@@ -657,4 +657,8 @@ def prepare_generic_workspace(data: Path, run: Path, schema: DatasetSchema | Non
             },
         },
     )
+    if data.is_dir() and (data / "truth.private/assessment.json").is_file():
+        from .evaluation import prepare_evaluation
+
+        prepare_evaluation(data, run)
     return DatasetSession(run).describe()

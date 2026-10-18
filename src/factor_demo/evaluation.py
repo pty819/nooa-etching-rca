@@ -13,7 +13,6 @@ import shutil
 import uuid
 from pathlib import Path
 
-import numpy as np
 import polars as pl
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score
 
@@ -25,45 +24,6 @@ from .io_utils import write_json
 from .research_models import ResearchReply
 from .research_workspace import PythonWorkspace
 
-MECHANISMS = {
-    "backside_he_leak": ("edge_leak_sccm_per_torr", 0.1, ["he_edge_"], [4, 8]),
-    "wafer_esc_contact": ("edge_contact_factor", 0.1, ["heater_z", "he_edge_"], [4, 8]),
-    "pump_restriction": ("pump_conductance_factor", 0.05, ["chamber_pressure", "pcv_"], [4, 8]),
-    "surface_condition": ("wall_recombination_factor", 0.1, ["oes_", "rf_source_"], [4, 8]),
-    "edge_ring": ("edge_ring_recession_mm", 0.1, ["rf_bias_", "oes_"], [4, 8]),
-}
-
-
-def _truth(source, metadata):
-    explicit = source / "truth.private/assessment.json"
-    if explicit.exists():
-        return json.loads(explicit.read_text())
-    hardware = json.loads((source / "truth.private/hardware.json").read_text())
-    targets = {r["run_id"]: r for r in metadata.filter(~pl.col("is_control")).iter_rows(named=True)}
-    grouped = {}
-    for row in hardware:
-        if row["run_id"] in targets:
-            grouped.setdefault(targets[row["run_id"]]["label"], []).append(row["parameters"])
-    labels = sorted(grouped)
-    pairs = {}
-    for i, a in enumerate(labels):
-        for b in labels[i + 1 :]:
-            pairs[a + "|" + b] = [
-                name
-                for name, (column, tolerance, _, _) in MECHANISMS.items()
-                if abs(
-                    np.mean([r[column] for r in grouped[a]])
-                    - np.mean([r[column] for r in grouped[b]])
-                )
-                > tolerance
-            ]
-    return {
-        "expected_by_pair": pairs,
-        "localization": {
-            name: {"prefixes": value[2], "steps": value[3]} for name, value in MECHANISMS.items()
-        },
-    }
-
 
 def prepare_evaluation(source: Path, run: Path):
     """Copy a private test snapshot once; do not export it to DATASET."""
@@ -73,18 +33,14 @@ def prepare_evaluation(source: Path, run: Path):
         return
     if not (source / "truth.private").is_dir():
         return
-    if not any(
-        (source / "truth.private" / name).exists() for name in ["assessment.json", "hardware.json"]
-    ):
+    if not (source / "truth.private/assessment.json").is_file():
         return
     schema = detect_schema(source)
     if not schema.split_column or not schema.label_column or not schema.asset_column:
         return
     metadata = index_frame(source, schema)
-    if schema.id_column != "run_id":
-        return
     targets = metadata.filter(
-        (pl.col(schema.split_column) == "test")
+        pl.col(schema.split_column).is_in(schema.excluded_splits)
         & (~pl.col(schema.control_column) if schema.control_column else pl.lit(True))
     )
     if targets.is_empty():
@@ -100,11 +56,18 @@ def prepare_evaluation(source: Path, run: Path):
         shutil.copyfile(safe_path(source, name), target)
     if schema.steps_file:
         step = pl.read_parquet(safe_path(source, schema.steps_file))
-        step.filter(pl.col("run_id").is_in(targets["run_id"].implode())).write_parquet(
-            private / schema.steps_file
-        )
+        identity = schema.id_column if schema.id_column in step.columns else "run_id"
+        if identity in step.columns:
+            step = step.filter(
+                pl.col(identity)
+                .cast(pl.String)
+                .is_in(targets[schema.id_column].cast(pl.String).implode())
+            )
+        step.write_parquet(private / schema.steps_file)
     write_json(private / "dataset.json", {"schema": schema.model_dump()})
-    write_json(base / "truth.json", _truth(source, metadata))
+    write_json(
+        base / "truth.json", json.loads((source / "truth.private/assessment.json").read_text())
+    )
     write_json(
         base / "manifest.json",
         {
@@ -113,7 +76,7 @@ def prepare_evaluation(source: Path, run: Path):
                 for p in base.rglob("*")
                 if p.is_file() and p.name != "manifest.json"
             },
-            "test_ids": targets["run_id"].to_list(),
+            "test_ids": targets[schema.id_column].cast(pl.String).to_list(),
             "source": "private held-out snapshot",
         },
     )

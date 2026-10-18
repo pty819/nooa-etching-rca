@@ -17,10 +17,20 @@ from .io_utils import write_json
 
 def prepare_workspace(data: Path, run: Path) -> dict:
     data, run = data.resolve(), run.resolve()
+    legacy_fdc_files = [
+        "runs.parquet",
+        "features.parquet",
+        "steps.parquet",
+        "outcomes.parquet",
+        "sensors.json",
+        "catalog.json",
+        "recipe.json",
+        "case.json",
+    ]
     if (
         data.is_file()
-        or not (data / "runs.parquet").is_file()
-        or not (data / "features.parquet").is_file()
+        or (data / "dataset.json").is_file()
+        or not all((data / name).is_file() for name in legacy_fdc_files)
     ):
         from .datasets import prepare_generic_workspace
 

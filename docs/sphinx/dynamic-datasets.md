@@ -31,6 +31,24 @@ CodeActV2可以根据当前问题现场编写任意科学Python，产生子集�
 
 现有刻蚀输入继续兼容，包括可选参考腔。无参考腔时导出空的同schema控制特征表；声明存在控制腔却缺必要表仍报错。
 
+## 工艺类型与领域知识不靠名称推断
+
+核心没有EPI/PVD/CVD枚举分支，也不根据目录名含有`etch`、`runs.parquet`文件名或`fixed_recipe=True`启用刻蚀算法。FDC惯例只用于识别列角色；复杂输入以显式schema为准。`prepare_workspace`对声明dataset.json的输入优先使用通用导入，不要求存在刻蚀示例的outcomes、sensor catalog或200个通道。
+
+例如一种设备数据可以声明不同的对象名、时间列、step号和两种配方：
+
+```json
+{"schema":{"modality":"timeseries","index_file":"lots.csv","id_column":"wafer_key","label_column":"condition","group_column":"campaign","split_column":"partition","asset_column":"telemetry","time_column":"elapsed","step_column":"phase","recipe_column":"recipe_key","fixed_recipe":false,"knowledge_profile":null,"units":{"custom_sensor":"declared_unit"}}}
+```
+
+固定配方只有显式声明或用户要求时才是约束；固定配方不是刻蚀的判别器。标签不固定为三组，step编号、窗口和传感器由CodeAct根据实际数据现场读取与编写代码。比较算法和证据门禁仍共用，不为每种工艺复制一套agent。
+
+可选`knowledge_profile`选择部署方安装在`knowledge/domains/<profile>/SKILL.md`的领域文本；名称经校验，只能选择安装包，不能指向任意路径。仓库附带`etch`案例知识。未指定或未安装的包会明确标记未加载，继续通用研究；不因此宣布具有该工艺的完整机理模型。领域包补充解释边界，不注入固定执行步骤或修改schema。
+
+EPI、PVD、CVD三组适配回归使用自定义列角色、非4号step、四个公开标签、变配方和不同索引名，真实经过外层CodeAct与科学worker；这验证数据研究接口，不是这些工艺的物理仿真或根因效果评测。另有反例确认固定recipe不会自动激活刻蚀包，路径中含etch也不会改变工艺。
+
+私有评分只接受显式`truth.private/assessment.json`契约；通用评分器不从任意hardware.json猜测刻蚀故障。附带刻蚀生成器通过专用`etch_evaluation`导出该契约，传感器前缀和故障阈值留在仿真插件内。旧数据若只有hardware.json，可重新生成到新目录；已有会话的冻结评分快照保留。私有评分支持声明的对象ID及留出split名称。
+
 ## 当前范围与恢复
 
 worker内置只读路径变量`DATASET`和引用`DATASET_ID`。所有新代码应从DATASET读当前版本。切换范围会等待当前代码结束、关闭科学worker并重建变量环境，避免沿用旧DataFrame；文件和NOOA对话保留。`run_script`的独立进程也获得这两个变量。

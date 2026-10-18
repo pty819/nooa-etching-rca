@@ -254,7 +254,7 @@ class MissionBudget:
         self.path = connection_file or root / "requests" / f"{mission}.admission.json"
         if connection_file is None:
             self.broker = AdmissionBroker(
-                group="etch-" + mission,
+                group="research-" + mission,
                 max_in_flight=policy.max_model_in_flight,
                 max_calls=policy.max_model_calls,
             ).start()

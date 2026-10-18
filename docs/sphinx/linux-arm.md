@@ -63,3 +63,24 @@ ssh -N -L 18765:127.0.0.1:8765 user@your-linux-host
 ## 持续验证
 
 Runtime checks包含Linux x86_64、[原生Linux ARM64 runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)和macOS，还单独强制bubblewrap运行完整Python回归，避免只验证有Landlock的默认云端环境。真正部署平台仍需执行同一套测试、自由科学代码、真实模型多轮研究与浏览器/SSE验收；不能仅凭runner名称宣布部署成功。
+
+## ARM NAS实测记录
+
+2026-10-19在RK3588、aarch64、Python3.12.13、7.1.8内核上确认Landlock ABI为0，自动选择已安装的bubblewrap0.11.1。使用原生ARM依赖；未复制macOS虚拟环境。首次完整SD卡运行被读写阻塞中断，因此不记为通过；随后把同一依赖和数据放入临时内存目录验证执行链路。临时目录不是持久化部署，也不作为存储性能结论。
+
+真实GLM按专家指令现场编写并运行Polars脚本，划出前两个lot的非参考腔子集，宿主重算为10条；MiniMax独立模型审查通过并交付。随后返回324条的公开发现主集，读取真实trace与step边界，绘制step4的20%—100%时间窗口内`he_edge_pressure_torr`曲线。该轮按可视化任务交付，状态`not_required`，没有强制进入模型比较或根因审查。两次计数均为`raw_recomputed`。
+
+第一次绘图因字体扫描超时，记录保留；预热部署字体索引、复制到各worker缓存后，同一受限执行器实际生成PNG，真实模型重试在102.68秒内完成交付。现场还发现代理`doc()`未接受原生`concise`参数，已补齐参数与多对象调用，并在真实外层CodeAct回归中验证。
+
+两条绘图路径分别验收：Matplotlib由受限worker的独立诊断实际绘图；真实agent重试时自主选择Pillow生成同一数据窗口的图，而不是依赖诊断脚本。第三次成功交付按专家反馈修正重叠标题、纵轴位置与刻度精度，新增`step4_he_readable.png`并保留旧图，耗时177.49秒。
+
+| 验证范围 | 结果 |
+|---|---|
+| NAS临时内存目录、原生ARM、实际bubblewrap | 完整110项通过，76条依赖警告，939.17秒；新增的7项后端/缓存回归另行通过（包含新符号链接反例） |
+| 本机macOS回归 | 完整110项通过；新增缓存反例包含在随后7项定向回归中 |
+| `d2d8a90`的[Runtime checks 39161615971](https://github.com/pty819/nooa-etching-rca/actions/runs/39161615971) | x86默认后端、原生ARM默认后端、强制bubblewrap、macOS各111项通过；前端14项通过、构建与依赖审计通过 |
+| 同提交的[Sphinx与Pages 39161615956](https://github.com/pty819/nooa-etching-rca/actions/runs/39161615956) | 严格文档构建与发布成功 |
+
+完整NAS回归启动时收集110项；后续新增的缓存符号链接反例单独运行，因此没有把两次运行相加冒称一次111项NAS全量验收。CI在最终代码上完整收集111项。NAS的原始SD卡首次失败、字体超时和后续重试均保留记录。
+
+以上证明Linux ARM上的自由代码、动态划分、主集回退、独立审查及图文交付可以连通，不能据此声称找到物理根因或完成多场景盲评。独立审查仍提示子集选择依据的证据链接与样本粒度说明可进一步加强。

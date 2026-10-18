@@ -122,8 +122,8 @@ def test_truth_score_distinguishes_missing_mechanism_and_false_positive_on_contr
 def test_surface_reference_keeps_residual_change_across_cohort_sizes(tmp_path):
     from dataclasses import asdict
 
+    from factor_demo.etch_evaluation import hardware_truth
     from factor_demo.etch_recipe import Hardware
-    from factor_demo.evaluation import _truth
 
     private = tmp_path / "truth.private"
     private.mkdir()
@@ -141,6 +141,6 @@ def test_surface_reference_keeps_residual_change_across_cohort_sizes(tmp_path):
                     }
                 )
         (private / "hardware.json").write_text(json.dumps(hardware))
-        assert _truth(tmp_path, pl.DataFrame(rows))["expected_by_pair"]["label1|label3"] == [
-            "surface_condition"
-        ]
+        assert hardware_truth(tmp_path, pl.DataFrame(rows))["expected_by_pair"][
+            "label1|label3"
+        ] == ["surface_condition"]

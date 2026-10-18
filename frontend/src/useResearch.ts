@@ -40,8 +40,8 @@ export function useResearch() {
     tab: "live",
     panel: window.innerWidth >= 1100,
     newDialog: false,
-    newTitle: "腔室 A · 配方一致性研究",
-    dataset: "etching-v3",
+    newTitle: "设备与工艺数据研究",
+    dataset: "",
     eventCount: 0,
     newBelow: false,
     pending: false,
@@ -675,6 +675,7 @@ export function useResearch() {
       .then((x) => {
         s.providers = x.providers;
         s.datasets = x.datasets;
+        if (!s.datasets.includes(s.dataset)) s.dataset = s.datasets[0] || "";
         if (x.providers.length && !x.providers.some((p: any) => p.id === "glm"))
           s.provider = x.providers[0].id;
       })

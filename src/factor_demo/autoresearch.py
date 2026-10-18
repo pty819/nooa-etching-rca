@@ -13,7 +13,8 @@ from pathlib import Path
 from .io_utils import write_json
 from .research_workspace import PythonWorkspace, prepare_workspace
 
-INITIAL_MESSAGE = """自主研究固定recipe刻蚀公开数据，分别比较1↔2、2↔3、1↔3。自由选择算法和写代码，
+INITIAL_MESSAGE = """根据用户目标与当前数据schema自主研究，不预设工艺类型、标签数量、传感器或步骤。
+需要分组比较时按用户指定的对比关系与独立样本粒度开展；只在数据明确声明时使用固定配方约束。自由选择算法和写代码，
 形成有数学证据、反证和可区分检查的假设。可以动态派生独立子研究，读取其结果后综合，避免重复证据。
 数值保存CSV/Parquet并提供EvidenceRef，supported/weak引用evidence_ids。保留失败和不确定性，不凑十个根因。
 达到可复核检查点返回ResearchReply，宿主会审查并可能要求定向修订。"""
