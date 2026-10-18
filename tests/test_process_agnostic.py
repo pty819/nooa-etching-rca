@@ -169,22 +169,43 @@ def test_switching_dataset_refreshes_and_retires_the_explicit_domain_pack(tmp_pa
     schema = DatasetSchema(index_file="runs.parquet", id_column="run_id", knowledge_profile="etch")
     (root / "input/dataset.json").write_text(json.dumps({"schema": schema.model_dump()}))
 
+    from factor_demo.datasets import DatasetSession
+
+    session = DatasetSession(root)
+    original = session.current()["id"]
+    child = session.registry.register(
+        root / "input",
+        schema.model_copy(update={"knowledge_profile": None}),
+        "generic representation",
+        parents=[original],
+        reason="explicit scope change",
+        relation="transform",
+    )
+    codes = [
+        f"assert 'backside_he_leak' in doc(self.domain_rules)\nawait self.select_dataset({child['id']!r})",
+        "try:\n doc(self.domain_rules)\nexcept AttributeError:\n pass\nelse:\n raise AssertionError('Previous scope skill is still exposed')\nawait self.return_dataset('root')",
+        "assert 'backside_he_leak' in doc(self.domain_rules)\nreturn_result({'summary':'领域包随数据范围切换'})",
+    ]
+    responses = [
+        LLMResponse(
+            parts=(
+                ToolCall(
+                    id=f"domain-{i}", name="python_cell", arguments=json.dumps({"code": code})
+                ),
+            ),
+            finish_reason="tool_calls",
+        )
+        for i, code in enumerate(codes)
+    ]
+
     async def exercise():
-        agent = AutoresearchAgent(PythonWorkspace(root), llm=FakeLLMClient())
+        client = FakeLLMClient(scripted_responses=responses, strict_exhaustion=True)
+        agent = AutoresearchAgent(PythonWorkspace(root), llm=client)
         try:
             install_research_context(agent, "切换到其他工艺数据表示")
-            original = agent._datasets.current()["id"]
-            child = agent._datasets.registry.register(
-                root / "input",
-                schema.model_copy(update={"knowledge_profile": None}),
-                "generic representation",
-                parents=[original],
-                reason="explicit scope change",
-                relation="transform",
-            )
-            await agent.select_dataset(child["id"])
-            assert "domain.domain_rules" not in agent._knowledge_registry.activated()
-            await agent.return_dataset("root")
+            result = await agent.research("切换并回退领域包")
+            assert result.summary == "领域包随数据范围切换"
+            assert len(client.calls) == 3
             assert "domain.domain_rules" in agent._knowledge_registry.activated()
         finally:
             await agent.aclose()

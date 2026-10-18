@@ -11,6 +11,7 @@ import typing
 import uuid
 from pathlib import Path
 
+from nooa import TextSkill
 from nooa.events import ExecutionResult
 from nooa.strategies import CodeActV2
 from nooa.strategies.codeact import _ReturnResultSignal
@@ -101,11 +102,20 @@ class ExternalCell:
             for name in TOOLS
             if hasattr(agent, name)
         }
-        self.docs = {
-            name: type(getattr(agent, name)).__doc__
-            for name in ["physics", "statistics"]
-            if getattr(agent, name, None) is not None
-        }
+
+    @property
+    def docs(self):
+        """Export data-only text for currently active skills at each cell boundary."""
+        registry = getattr(self.agent, "_knowledge_registry", None)
+        if registry is None:
+            return {}
+        result = {}
+        for registered_name in registry.activated():
+            name = registered_name.rsplit(".", 1)[-1].replace("-", "_")
+            skill = getattr(self.agent, name, None)
+            if not name.startswith("_") and isinstance(skill, TextSkill):
+                result[name] = inspect.getdoc(type(skill)) or ""
+        return result
 
     async def dispatch(self, message):
         if message.get("name") not in self.tools or set(message) - {
