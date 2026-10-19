@@ -255,6 +255,16 @@ def generate_etching(
             "reference": "chamber_B is a contemporaneous normal reference, one sample per lot",
         },
     )
+    from .dataset_adapter import fdc_schema
+
+    write_json(
+        directory / "dataset.json",
+        {
+            "schema": fdc_schema()
+            .model_copy(update={"fixed_recipe": True, "knowledge_profile": "etch"})
+            .model_dump()
+        },
+    )
     manifest = {
         "schema_version": 3,
         "kind": "physics_inspired_icp_etch",

@@ -286,6 +286,27 @@ class EvidenceVerifier:
                 self.fail(
                     f"{h.id}: supported requires completed, recomputed checks; otherwise use weak/unresolved"
                 )
+            if h.status == "supported":
+                for evidence_id in h.evidence_ids:
+                    grade = verified_by_id[evidence_id]["provenance"]["grade"]
+                    if grade not in {"raw_recomputed", "formula_recomputed"}:
+                        self.fail(
+                            f"{h.id}: supported may only cite recomputed evidence "
+                            f"(rejected exploratory {evidence_id})"
+                        )
+                for check in h.checks:
+                    if check.status != "completed":
+                        continue
+                    if check.evidence_id not in set(h.evidence_ids):
+                        self.fail(
+                            f"{h.id}: supported checks must reference hypothesis evidence_ids"
+                        )
+                    if check.subtract_evidence_id and check.subtract_evidence_id not in set(
+                        h.evidence_ids
+                    ):
+                        self.fail(
+                            f"{h.id}: supported checks must reference hypothesis evidence_ids"
+                        )
             if h.status == "rejected" and (not completed or all(c["passed"] for c in completed)):
                 self.fail(
                     f"{h.id}: rejected requires a completed failed check; otherwise use unresolved"

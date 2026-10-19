@@ -82,6 +82,11 @@ def refresh_domain_context(agent):
     if registry is None:
         return
     registry.deactivate(["domain.*"])
+    if hasattr(agent, "domain_rules"):
+        try:
+            delattr(agent, "domain_rules")
+        except AttributeError:
+            pass
     schema = agent._datasets.schema() if getattr(agent, "_datasets", None) else None
     profile = schema.knowledge_profile if schema else None
     domain = Path(__file__).parent / "knowledge/domains" / profile if profile else None

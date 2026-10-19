@@ -32,3 +32,11 @@ macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap�
 ## 评估隔离的限度
 
 隐藏test和仿真参考存放在宿主私有快照，所有agent工具均不提供评分入口。收尾评分先冻结报告和已选方法，只允许对同一定义重试。生成器公开，所以拿到全仓权限的人仍能了解故障构造；不能把它当成第三方独立科学发现证明。公开机制ID只是分类词表，不包含哪个场景对应哪个答案。
+
+## Host path integrity and process reaping
+
+- Host writes into the sandbox workspace (`research_cells`, JSON outputs, formula/`state.joblib` copies, font cache seeds) refuse symbolic links (`O_NOFOLLOW` / realpath containment). A cell cannot redirect host I/O outside the workspace by planting symlinks.
+- On Linux, cell supervisors become child subreapers and `reap()` SIGKILLs the process group **and** every `/proc` descendant, so `setsid()` grandchildren do not survive a finished cell. Bubblewrap additionally uses a private PID namespace (`--unshare-all --die-with-parent`).
+- Linux seccomp denies `socket`/`socketpair`, `io_uring_*`, ptrace/process-vm, and cross-process signals. `fork`/`exec` remain for scientific helpers (e.g. subprocess); without sockets or io_uring they cannot open network channels. Prefer bubblewrap when a private network/PID namespace is required.
+- macOS applies `RLIMIT_AS` / `RLIMIT_CPU` in the child bootstrap alongside `(deny default)` sandbox-exec. Full PID-namespace isolation is Linux/bubblewrap-only.
+

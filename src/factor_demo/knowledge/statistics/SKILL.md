@@ -17,7 +17,7 @@ description: 统计验证和闭环证据审查规则
     - 自由写artifacts/*.py的extract(trace,steps,params)，返回每run单个数值或None。register_formula(FormulaSpec(...))登记传感器、step、窗口/频带等参数、单位、文字公式和源码快照。任意科学Python均可，不局限算子；输入不含label或outcome。step内20%以后应以实际step边界及其单位计算阈值；仅在数据确有start_s/end_s列时使用这些名称，说明边界。mean(a*b)不等于mean(a)*mean(b)。应先构造小反例核对语义。
     - evaluate_formula_set(study_id,["name@1",...])把每个单公式及有意义组合与所有固定模型比较；预处理由程序在fold内拟合。所有登记单公式默认需比较，失败保留，确实不适用时retire_formula_set并给科学理由。不能为抬高分数排除有效候选。
     - 完成比较后freeze_formula_selection会从原始数据重算最佳公式及模型，核对预测和分数；新公式版本使旧选择失效。ResearchReply.formula_comparison=FormulaHandoff(study_id=...,status="selected",selection_id=...)。没完成必须status="incomplete"+reason，不能省略。
-    - 报告解释最佳公式具体传感器/step/时间窗、物理意义、失败方法和反证。最高仅指本次候选在固定开发集上的最高，不代表普遍最优、独立测试表现或因果根因。专家据dev多轮调整会适应开发集，必须披露。
+    - 报告解释最佳公式具体传感器/step/时间窗、物理意义、失败方法和反证。排名以分组CV为主、开发集为辅；最高仅指本次候选在该协议下的最高，不代表普遍最优、独立测试表现或因果根因。专家据dev多轮调整会适应开发集，必须披露。
 
     证据的验证级别：自由科学Python的产物会绑定宿主执行记录，但“可以重跑”不证明数据或公式语义正确。最终原始事实优先调用materialize_raw_evidence(RawEvidenceSpec(...))，声明真实数据文件、列、筛选、step窗和统计，保留返回的proof_id/sha256/数值/单位；宿主会独立重算。复杂算子与模型指标可继续自由探索，正式模型指标用materialize_formula_evidence从规范预测重新计分。派生数据明确标记derived，不能冒充原始测量。未登记的手写CSV不作为已验证证据。
 
