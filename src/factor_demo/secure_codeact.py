@@ -18,7 +18,13 @@ from nooa.strategies.codeact import _ReturnResultSignal
 from pydantic import BaseModel, TypeAdapter
 
 from .cell_wire import MAX_FRAME, decode, dumps, encode, loads
-from .sandboxing import child_environment, launch, prepare_guard_modules, reap
+from .sandboxing import (
+    child_environment,
+    ensure_child_subreaper,
+    launch,
+    prepare_guard_modules,
+    reap,
+)
 
 TOOLS = frozenset(
     [
@@ -157,6 +163,7 @@ class ExternalCell:
             "previous": str(self.checkpoint) if self.checkpoint else None,
             "checkpoint": str(checkpoint),
         }
+        ensure_child_subreaper()
         process = await asyncio.create_subprocess_exec(
             *launch([self.kit / "codeact_child.py"], [self.kit], [self.work]),
             cwd=self.work,

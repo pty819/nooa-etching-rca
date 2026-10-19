@@ -221,6 +221,54 @@ def mac_profile(reads, writes):
     )
 
 
+def _pid_namespace_prefix():
+    """Best-effort private PID namespace for Landlock cells via bubblewrap.
+
+    Filesystem confinement stays Landlock's job; this only adds `--unshare-pid`
+    so killing namespace init reaps setsid/fork-chain grandchildren. Returns []
+    when bwrap is missing or the probe fails (documented fallback).
+    """
+    import shutil
+    import subprocess
+
+    binary = shutil.which("bwrap")
+    if not binary:
+        return []
+    probe = subprocess.run(
+        [
+            binary,
+            "--unshare-pid",
+            "--die-with-parent",
+            "--bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "/usr/bin/true",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if probe.returncode != 0:
+        return []
+    return [
+        binary,
+        "--unshare-pid",
+        "--die-with-parent",
+        "--bind",
+        "/",
+        "/",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+    ]
+
+
 def launch(python_args, reads, writes):
     if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
         return [
@@ -235,7 +283,20 @@ def launch(python_args, reads, writes):
     if sys.platform.startswith("linux"):
         if linux_backend() == "bubblewrap":
             return bubblewrap_command(python_args, reads, writes)
-        return [sys.executable, "-I", "-u", *map(str, python_args)]
+        # Landlock FS + subreaper; wrap with bwrap PID ns when available so
+        # setsid/fork-chain orphans die with namespace init.
+        reaper = str(Path(__file__).resolve().with_name("cell_reaper.py"))
+        command = [
+            sys.executable,
+            "-I",
+            "-u",
+            reaper,
+            sys.executable,
+            "-I",
+            "-u",
+            *map(str, python_args),
+        ]
+        return [*_pid_namespace_prefix(), *command]
     raise RuntimeError("No enforced execution backend on this platform")
 
 
@@ -274,15 +335,13 @@ def prepare_font_cache():
 
 def seed_worker_fonts(cache):
     import re
-    import shutil
+
+    from .path_guard import copy_regular_nofollow, ensure_real_dir
 
     source = font_cache_seed()
-    if not source.is_dir():
+    if not source.is_dir() or source.is_symlink():
         return
-    target = cache / "mpl"
-    if target.is_symlink():
-        raise RuntimeError("Worker font cache must not be a symbolic link")
-    target.mkdir(parents=True, exist_ok=True)
+    target = ensure_real_dir(Path(cache) / "mpl")
     for path in source.iterdir():
         if (
             not re.fullmatch(r"fontlist-v[0-9]+(?:\.[0-9]+)*\.json", path.name)
@@ -291,15 +350,17 @@ def seed_worker_fonts(cache):
         ):
             continue
         dest = target / path.name
-        if not dest.is_symlink() and not dest.exists() and path.stat().st_size <= 8 * 1024 * 1024:
-            shutil.copyfile(path, dest)
+        if dest.exists() or dest.is_symlink():
+            continue
+        if path.stat().st_size > 8 * 1024 * 1024:
+            continue
+        copy_regular_nofollow(path, dest, required_root=source)
 
 
 def child_environment(work: Path, **extra):
-    cache = work / ".cache"
-    if cache.is_symlink():
-        raise RuntimeError("Worker cache must not be a symbolic link")
-    cache.mkdir(parents=True, exist_ok=True)
+    from .path_guard import ensure_real_dir
+
+    cache = ensure_real_dir(Path(work) / ".cache", root=work)
     seed_worker_fonts(cache)
     environment = {
         "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
@@ -344,8 +405,43 @@ def prepare_guard_modules(kit: Path):
         (kit / name).write_text(source)
 
 
+def _apply_host_rlimits():
+    """Memory/CPU caps for Linux and macOS children (soft == hard)."""
+    import resource
+
+    # Mirror NOOA apply_rlimits: headroom above current address space + CPU seconds.
+    try:
+        baseline = 0
+        status = Path("/proc/self/status")
+        if status.is_file():
+            for line in status.read_text().splitlines():
+                if line.startswith("VmSize:"):
+                    baseline = int(line.split()[1]) * 1024
+                    break
+        limit = baseline + 2048 * 1024 * 1024
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if hard != resource.RLIM_INFINITY:
+            limit = min(limit, hard)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (OSError, ValueError):
+        # macOS may reject some RLIMIT_AS values; CPU still applies.
+        pass
+    try:
+        secs = 300
+        _, hard = resource.getrlimit(resource.RLIMIT_CPU)
+        if hard != resource.RLIM_INFINITY:
+            secs = min(secs, hard)
+        resource.setrlimit(resource.RLIMIT_CPU, (secs, secs))
+    except (OSError, ValueError):
+        pass
+
+
 def install_linux(reads, writes):
     """Applied by the trusted fresh child bootstrap before loading user code/state."""
+    # rlimits are available on both Linux and macOS; filesystem backends differ.
+    if sys.platform == "darwin":
+        _apply_host_rlimits()
+        return
     if not sys.platform.startswith("linux"):
         return
     import ctypes
@@ -380,14 +476,61 @@ def install_linux(reads, writes):
             raise RuntimeError("Bubblewrap root must be read-only")
     else:
         raise RuntimeError("Unknown cell execution backend")
-    # Deny socket creation (including AF_UNIX), ptrace/process-memory access and
-    # signals to other processes. The parent retains authority to reap children.
+    # Seccomp: deny network/io_uring, cross-process signals, ptrace/process-vm,
+    # namespace entry (unshare/setns/clone NEW*), and return ENOSYS for clone3 so
+    # libc falls back to clone (whose flags we filter). fork/exec stay available
+    # for scientific helpers; without sockets they cannot open network channels.
     arch = platform.machine()
-    numbers = {
-        "x86_64": [41, 101, 310, 311, 62, 200, 234, 424, 434],
-        "aarch64": [198, 117, 270, 271, 129, 130, 131, 424, 434],
+    # EPERM denylist (arch-specific numbers).
+    deny_eperm = {
+        "x86_64": [
+            41,  # socket
+            53,  # socketpair
+            101,  # ptrace
+            310,  # process_vm_readv
+            311,  # process_vm_writev
+            62,  # kill
+            200,  # tkill
+            234,  # tgkill
+            129,  # rt_sigqueueinfo
+            297,  # rt_tgsigqueueinfo
+            424,  # pidfd_send_signal
+            434,  # pidfd_open
+            438,  # pidfd_getfd
+            425,  # io_uring_setup
+            426,  # io_uring_enter
+            427,  # io_uring_register
+            272,  # unshare
+            308,  # setns
+        ],
+        "aarch64": [
+            198,  # socket
+            199,  # socketpair
+            117,  # ptrace
+            270,  # process_vm_readv
+            271,  # process_vm_writev
+            129,  # kill
+            130,  # tkill
+            131,  # tgkill
+            138,  # rt_sigqueueinfo
+            139,  # rt_tgsigqueueinfo
+            424,  # pidfd_send_signal
+            434,  # pidfd_open
+            438,  # pidfd_getfd
+            425,  # io_uring_setup
+            426,  # io_uring_enter
+            427,  # io_uring_register
+            97,  # unshare
+            268,  # setns
+        ],
     }
-    if arch not in numbers:
+    clone_nr = {"x86_64": 56, "aarch64": 220}
+    clone3_nr = {"x86_64": 435, "aarch64": 435}
+    # Namespace-related clone flags (NEWNS|NEWCGROUP|NEWUTS|NEWIPC|NEWUSER|NEWPID|NEWNET).
+    clone_ns_mask = (
+        0x00020000 | 0x02000000 | 0x04000000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000
+    )
+    if arch not in deny_eperm:
         raise RuntimeError("Unsupported seccomp architecture")
 
     class Filter(ctypes.Structure):
@@ -401,19 +544,65 @@ def install_linux(reads, writes):
     class Program(ctypes.Structure):
         _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(Filter))]
 
+    BPF_LD = 0x00
+    BPF_JMP = 0x05
+    BPF_RET = 0x06
+    BPF_W = 0x00
+    BPF_ABS = 0x20
+    BPF_JEQ = 0x10
+    BPF_JGE = 0x30
+    BPF_JSET = 0x40
+    BPF_K = 0x00
+    SECCOMP_RET_KILL = 0x80000000
+    SECCOMP_RET_ERRNO = 0x00050000
+    SECCOMP_RET_ALLOW = 0x7FFF0000
+    ENOSYS = 38
+    EPERM = 1
+
     expected_arch = 0xC000003E if arch == "x86_64" else 0xC00000B7
-    instructions = [
-        (0x20, 0, 0, 4),
-        (0x15, 1, 0, expected_arch),
-        (0x06, 0, 0, 0x80000000),
-        (0x20, 0, 0, 0),
+    instructions: list[tuple[int, int, int, int]] = [
+        # A = arch
+        (BPF_LD | BPF_W | BPF_ABS, 0, 0, 4),
+        (BPF_JMP | BPF_JEQ | BPF_K, 1, 0, expected_arch),
+        (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL),
+        # A = nr
+        (BPF_LD | BPF_W | BPF_ABS, 0, 0, 0),
     ]
     if arch == "x86_64":
-        # Reject the alternate x32 syscall table as well as native forbidden calls.
-        instructions.extend([(0x35, 0, 1, 0x40000000), (0x06, 0, 0, 0x00050000 | 1)])
-    for number in numbers[arch]:
-        instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x00050000 | 1)])
-    instructions.append((0x06, 0, 0, 0x7FFF0000))
+        # Reject the alternate x32 syscall table (NR | 0x40000000).
+        instructions.extend(
+            [
+                (BPF_JMP | BPF_JGE | BPF_K, 0, 1, 0x40000000),
+                (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+            ]
+        )
+    # clone3 -> ENOSYS (libc retries with clone).
+    instructions.extend(
+        [
+            (BPF_JMP | BPF_JEQ | BPF_K, 0, 1, clone3_nr[arch]),
+            (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | ENOSYS),
+        ]
+    )
+    # clone with any NEW* namespace bit -> EPERM; plain fork/clone for threads OK.
+    instructions.extend(
+        [
+            (BPF_JMP | BPF_JEQ | BPF_K, 0, 4, clone_nr[arch]),
+            # A = args[0] low 32 bits (flags)
+            (BPF_LD | BPF_W | BPF_ABS, 0, 0, 16),
+            (BPF_JMP | BPF_JSET | BPF_K, 0, 1, clone_ns_mask),
+            (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+            # restore A = nr for subsequent compares
+            (BPF_LD | BPF_W | BPF_ABS, 0, 0, 0),
+        ]
+    )
+    for number in deny_eperm[arch]:
+        instructions.extend(
+            [
+                (BPF_JMP | BPF_JEQ | BPF_K, 0, 1, number),
+                (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+            ]
+        )
+    instructions.append((BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW))
     array = (Filter * len(instructions))(*(Filter(*i) for i in instructions))
     program = Program(len(instructions), array)
     libc = ctypes.CDLL(None, use_errno=True)
@@ -421,11 +610,83 @@ def install_linux(reads, writes):
         raise OSError(ctypes.get_errno(), "Cannot install seccomp; execution refused")
 
 
+def _proc_children(root_pid: int) -> set[int]:
+    """All descendants of root_pid via /proc (covers setsid grandchildren)."""
+    if not Path("/proc").is_dir():
+        return set()
+    parents: dict[int, list[int]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            pid = int(entry.name)
+            raw = (entry / "stat").read_text()
+            close = raw.rfind(")")
+            fields = raw[close + 2 :].split()
+            ppid = int(fields[1])
+            parents.setdefault(ppid, []).append(pid)
+        except (OSError, ValueError, IndexError):
+            continue
+    found: set[int] = set()
+    stack = [root_pid]
+    while stack:
+        current = stack.pop()
+        for child in parents.get(current, []):
+            if child not in found:
+                found.add(child)
+                stack.append(child)
+    return found
+
+
+def _kill_tree(root_pid: int) -> None:
+    """SIGKILL the process group and every live /proc descendant (setsid-safe).
+
+    Freeze with SIGSTOP first so a fork-chain cannot outrun a single snapshot.
+    """
+    import time
+
+    deadline = time.monotonic() + 3.0
+    quiet = 0
+    while time.monotonic() < deadline:
+        descendants = _proc_children(root_pid)
+        try:
+            os.killpg(root_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if not descendants:
+            quiet += 1
+            if quiet >= 3:
+                break
+            time.sleep(0.002)
+            continue
+        quiet = 0
+        for pid in descendants:
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+        for pid in _proc_children(root_pid) | descendants:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def ensure_child_subreaper() -> None:
+    """Become subreaper so setsid orphans re-parent here instead of PID 1."""
+    if not sys.platform.startswith("linux"):
+        return
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    # PR_SET_CHILD_SUBREAPER = 36
+    libc.prctl(36, 1, 0, 0, 0)
+
+
 async def reap(process):
     if process is None:
         return
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    ensure_child_subreaper()
+    _kill_tree(process.pid)
     await process.wait()
+    _kill_tree(process.pid)

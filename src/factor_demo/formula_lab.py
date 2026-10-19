@@ -288,7 +288,7 @@ class FormulaLab:
                 "model_params": {m: MODEL_PARAMS[m] for m in spec.models},
                 "participants": [self.owner],
                 "preprocessing": "fold-fit median imputation; logistic only: fold-fit standard scaling",
-                "ranking": "dev metric descending, grouped CV mean descending, CV std ascending, fewer formulas, stable result id",
+                "ranking": "grouped CV mean descending, CV std ascending, dev metric descending, fewer formulas, stable result id",
             },
             "formulas": [],
             "sets": [],
@@ -612,9 +612,9 @@ class FormulaLab:
         return sorted(
             rows,
             key=lambda r: (
-                -r["dev_score"],
                 -r["cv_mean"],
                 r["cv_std"],
+                -r["dev_score"],
                 len(r["formulas"]),
                 r["id"],
             ),

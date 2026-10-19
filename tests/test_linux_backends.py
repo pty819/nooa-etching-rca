@@ -121,16 +121,22 @@ def test_font_seed_never_follows_worker_cache_symlinks(tmp_path, monkeypatch):
     work.mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
+    # Symlink traps are replaced with real directories; host must not write outside.
     (work / ".cache").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(RuntimeError, match="symbolic link"):
-        sandboxing.child_environment(work)
-    (work / ".cache").unlink()
-    (work / ".cache/mpl").mkdir(parents=True)
+    sandboxing.child_environment(work)
+    assert (work / ".cache").is_dir() and not (work / ".cache").is_symlink()
+    assert not list(outside.glob("fontlist*"))
+    (work / ".cache/mpl/fontlist-v400.json").unlink(missing_ok=True)
     (work / ".cache/mpl/fontlist-v400.json").symlink_to(outside / "new.json")
     sandboxing.child_environment(work)
     assert not (outside / "new.json").exists()
-    (work / ".cache/mpl/fontlist-v400.json").unlink()
-    (work / ".cache/mpl").rmdir()
+    (work / ".cache/mpl").unlink() if (work / ".cache/mpl").is_symlink() else None
+    if (work / ".cache/mpl").exists():
+        import shutil
+
+        shutil.rmtree(work / ".cache/mpl")
     (work / ".cache/mpl").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(RuntimeError, match="symbolic link"):
-        sandboxing.child_environment(work)
+    sandboxing.child_environment(work)
+    assert (work / ".cache/mpl").is_dir() and not (work / ".cache/mpl").is_symlink()
+    assert (work / ".cache/mpl/fontlist-v400.json").is_file()
+    assert not list(outside.glob("fontlist*"))

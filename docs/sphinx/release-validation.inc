@@ -2,7 +2,7 @@
 
 | 检查 | 实际结果与范围 |
 |---|---|
-| Python完整回归 | 104 passed，0 failed；76条上游类型/弃用提示保留，覆盖全部最终代码 |
+| Python完整回归 | 123 passed，0 failed（2026-10-19 hardening 分支复核口径）；历史行保留当时104的远端记录 |
 | 网关、留出评分与规范正文专项 | 专项8 passed，后续网关与编排13 passed；MiniMax Anthropic thinking参数实际HTTP构造、内部路由ID不发送、冻结test模型与重算、规范文本原样交付 |
 | Vue交互回归 | 14 passed；新增收尾评估显示、运行中禁用和旧响应丢弃 |
 | TypeScript/Vite | 类型检查与生产构建通过 |
@@ -24,4 +24,6 @@
 
 Runtime checks新增Ubuntu24.04与macOS15的真实pytest，以及Node24前端测试、构建与审计。此处本地结果不能替代远端平台验收；最新状态以[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)和[文档发布](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)的对应提交为准。
 
-最终代码提交`5a0603b`的[Runtime checks 39138352863](https://github.com/pty819/nooa-etching-rca/actions/runs/39138352863)已全部success：Ubuntu24.04和macOS15各104通过，前端14通过、构建与审计通过。同期[Sphinx与Pages 39138352830](https://github.com/pty819/nooa-etching-rca/actions/runs/39138352830)的build/deploy均success。后续本页的记录更新只改变文档，运行代码与该已验收提交一致。
+历史验收提交`5a0603b`的[Runtime checks 39138352863](https://github.com/pty819/nooa-etching-rca/actions/runs/39138352863)曾全部success（各104通过）。
+
+2026-10-19 sandbox hardening 复核后：本地与 CI 口径为 **123 passed / 0 failed**（含 symlink/reap/seccomp/领域包回归）；以当前 `main`/PR 对应的[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)为准，不再把文档数字钉在`5a0603b`。

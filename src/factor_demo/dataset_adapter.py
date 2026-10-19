@@ -72,6 +72,14 @@ def detect_schema(root: Path) -> DatasetSchema:
             updates["steps_file"] = None
         if "trace_path" not in columns:
             updates.update(modality="table", time_column=None, step_column=None)
+        manifest = root / "manifest.json"
+        if manifest.is_file():
+            try:
+                kind = json.loads(manifest.read_text()).get("kind")
+            except (OSError, ValueError):
+                kind = None
+            if kind == "physics_inspired_icp_etch":
+                updates.update(fixed_recipe=True, knowledge_profile="etch")
         return schema.model_copy(update=updates)
     for name in ["samples.parquet", "samples.csv", "samples.jsonl"]:
         if (root / name).is_file():

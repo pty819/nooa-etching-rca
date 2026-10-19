@@ -13,6 +13,7 @@ import polars as pl
 from .dataset_adapter import index_frame, read_table, safe_path
 from .datasets import file_hash
 from .io_utils import write_json
+from .path_guard import copy_regular_nofollow
 
 
 class FeatureExecutor:
@@ -132,7 +133,9 @@ class FeatureExecutor:
             folder = self.job(study, "sample", spec)
             item = self.sample(root, schema, row, spec, folder / "input", uuid.uuid4().hex)
             if state:
-                shutil.copyfile(state, folder / "input/state.joblib")
+                copy_regular_nofollow(
+                    state, folder / "input/state.joblib", required_root=state.parent.resolve()
+                )
             write_json(
                 folder / "input/job.json",
                 {
@@ -249,7 +252,9 @@ class FeatureExecutor:
                         cache.parent.mkdir(parents=True, exist_ok=True)
                         if state:
                             temporary_state = state_cache.with_name("." + uuid.uuid4().hex)
-                            shutil.copyfile(state, temporary_state)
+                            copy_regular_nofollow(
+                                state, temporary_state, required_root=state.parent.resolve()
+                            )
                             temporary_state.replace(state_cache)
                             state_hash.write_text(file_hash(state_cache))
                         temporary = cache.with_name("." + uuid.uuid4().hex + ".parquet")

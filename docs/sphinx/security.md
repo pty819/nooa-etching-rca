@@ -32,3 +32,14 @@ macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap�
 ## 评估隔离的限度
 
 隐藏test和仿真参考存放在宿主私有快照，所有agent工具均不提供评分入口。收尾评分先冻结报告和已选方法，只允许对同一定义重试。生成器公开，所以拿到全仓权限的人仍能了解故障构造；不能把它当成第三方独立科学发现证明。公开机制ID只是分类词表，不包含哪个场景对应哪个答案。
+
+## Host path integrity and process reaping
+
+- Host writes into the sandbox workspace (`research_cells`, JSON outputs, formula/`state.joblib` copies, font cache seeds) refuse symbolic links (`O_NOFOLLOW` / realpath containment). A cell cannot redirect host I/O outside the workspace by planting symlinks.
+- **Bubblewrap backend**: private mount root plus `--unshare-all --die-with-parent` (PID, net, mount, …). Killing the bwrap supervisor tears down the whole namespace; `setsid` / fork-chains cannot outlive the cell.
+- **Landlock backend**: filesystem rules come from Landlock. Process isolation is layered as:
+  1. When `bwrap` is installed, the cell is additionally wrapped with `bwrap --unshare-pid --die-with-parent` (PID namespace only; FS policy remains Landlock). This is the supported way to make setsid/fork-chain orphans die with the cell.
+  2. A trusted `cell_reaper` (outside seccomp) is a child subreaper, sets `PR_SET_PDEATHSIG` on the worker, and after the worker exits SIGSTOPs then SIGKILLs live `/proc` descendants.
+  3. If `bwrap` is unavailable, PID-namespace teardown is not guaranteed; the reaper fallback still reaps ordinary setsid grandchildren, but a maximal fork-chain may race a pure `/proc` scan. Install bubblewrap for production Landlock deployments.
+- **Linux seccomp** (both backends, after Landlock/bwrap bootstrap): denies `socket`/`socketpair`, `io_uring_*`, `ptrace`, `process_vm_*`, `pidfd_open`/`pidfd_getfd`/`pidfd_send_signal`, and cross-process signal delivery (`kill`/`tkill`/`tgkill`/`rt_sigqueueinfo`/`rt_tgsigqueueinfo`). Also denies `unshare`/`setns`, returns `ENOSYS` for `clone3` (so libc falls back to `clone`), and rejects `clone` flags that create namespaces (`CLONE_NEW*`). `fork`/`clone` without namespace flags and `exec` remain for scientific helpers; without sockets they cannot open network channels. Wrong architecture and the x86_64 x32 ABI table are rejected.
+- **macOS**: `(deny default)` sandbox-exec plus `RLIMIT_AS` / `RLIMIT_CPU` in the child bootstrap. No Linux-style PID namespace or seccomp filter; do not treat macOS as equivalent process isolation to Linux bubblewrap.
