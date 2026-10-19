@@ -98,6 +98,20 @@ def main() -> None:
     if sys.platform.startswith("linux"):
         import ctypes
 
+        # Best-effort cgroup v2 pids.max (no factor_demo import: process starts with -I).
+        try:
+            root = os.environ.get("FACTOR_CELL_CGROUP", "").strip()
+            limit = int(os.environ.get("FACTOR_CELL_NPROC", "512"))
+            if root and limit >= 8:
+                base = Path(root)
+                cell = base / f"factor-cell-{os.getpid()}"
+                cell.mkdir(parents=True, exist_ok=True)
+                pids_max = cell / "pids.max"
+                if pids_max.exists():
+                    pids_max.write_text(str(limit))
+                (cell / "cgroup.procs").write_text(str(os.getpid()))
+        except (OSError, ValueError):
+            pass
         libc = ctypes.CDLL(None, use_errno=True)
         libc.prctl(36, 1, 0, 0, 0)  # PR_SET_CHILD_SUBREAPER
     child = os.fork()

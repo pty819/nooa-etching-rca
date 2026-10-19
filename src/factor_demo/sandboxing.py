@@ -283,8 +283,7 @@ def launch(python_args, reads, writes):
     if sys.platform.startswith("linux"):
         if linux_backend() == "bubblewrap":
             return bubblewrap_command(python_args, reads, writes)
-        # Landlock FS + subreaper; wrap with bwrap PID ns when available so
-        # setsid/fork-chain orphans die with namespace init.
+        # Landlock FS + subreaper; require bwrap PID ns unless explicitly opted out.
         reaper = str(Path(__file__).resolve().with_name("cell_reaper.py"))
         command = [
             sys.executable,
@@ -296,7 +295,14 @@ def launch(python_args, reads, writes):
             "-u",
             *map(str, python_args),
         ]
-        return [*_pid_namespace_prefix(), *command]
+        prefix = _pid_namespace_prefix()
+        if not prefix and not _allow_landlock_without_pidns():
+            raise RuntimeError(
+                "Landlock without bubblewrap PID namespace is disabled by default "
+                "(fork storms can exhaust host PIDs). Install bubblewrap, or set "
+                "FACTOR_ALLOW_LANDLOCK_WITHOUT_PIDNS=1 to opt into the degraded mode."
+            )
+        return [*prefix, *command]
     raise RuntimeError("No enforced execution backend on this platform")
 
 
@@ -380,6 +386,15 @@ def child_environment(work: Path, **extra):
     }
     if sys.platform.startswith("linux"):
         environment["NOOA_CELL_BACKEND"] = linux_backend()
+    # Tunables read by install_linux / cell_reaper inside the child.
+    for key in (
+        "FACTOR_CELL_NPROC",
+        "FACTOR_CELL_CGROUP",
+        "FACTOR_FONT_CACHE_DIR",
+        "FACTOR_ALLOW_LANDLOCK_WITHOUT_PIDNS",
+    ):
+        if key in os.environ:
+            environment[key] = os.environ[key]
     return environment
 
 
@@ -403,6 +418,70 @@ def prepare_guard_modules(kit: Path):
                 original, "from _guard_config import LandlockRule, ResolvedSpec"
             )
         (kit / name).write_text(source)
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _allow_landlock_without_pidns() -> bool:
+    return _env_flag("FACTOR_ALLOW_LANDLOCK_WITHOUT_PIDNS")
+
+
+def cell_nproc_limit() -> int:
+    """Max processes per cell (RLIMIT_NPROC / cgroup pids.max). Default 512."""
+    raw = os.environ.get("FACTOR_CELL_NPROC", "512").strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError("FACTOR_CELL_NPROC must be an integer") from error
+    if value < 8:
+        raise RuntimeError("FACTOR_CELL_NPROC must be >= 8")
+    return value
+
+
+def _apply_nproc_rlimit() -> None:
+    import resource
+
+    limit = cell_nproc_limit()
+    try:
+        _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
+        new_hard = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
+        resource.setrlimit(resource.RLIMIT_NPROC, (new_hard, new_hard))
+    except (OSError, ValueError):
+        pass
+
+
+def apply_cell_cgroup_pids(max_pids: int | None = None) -> Path | None:
+    """Best-effort cgroup v2 pids.max for the current process tree (host side).
+
+    Uses FACTOR_CELL_CGROUP when it points at a writable cgroup directory; otherwise
+    returns None. Safe no-op when cgroup delegation is unavailable.
+    """
+    max_pids = cell_nproc_limit() if max_pids is None else max_pids
+    root = os.environ.get("FACTOR_CELL_CGROUP", "").strip()
+    if not root:
+        return None
+    base = Path(root)
+    if not base.is_dir():
+        return None
+    cell = base / f"factor-cell-{os.getpid()}-{uuid_like()}"
+    try:
+        cell.mkdir(parents=True, exist_ok=False)
+        pids_max = cell / "pids.max"
+        if pids_max.exists():
+            pids_max.write_text(str(max_pids))
+        procs = cell / "cgroup.procs"
+        procs.write_text(str(os.getpid()))
+        return cell
+    except OSError:
+        return None
+
+
+def uuid_like() -> str:
+    import uuid
+
+    return uuid.uuid4().hex[:12]
 
 
 def _apply_host_rlimits():
@@ -441,6 +520,7 @@ def install_linux(reads, writes):
     # rlimits are available on both Linux and macOS; filesystem backends differ.
     if sys.platform == "darwin":
         _apply_host_rlimits()
+        _apply_nproc_rlimit()
         return
     if not sys.platform.startswith("linux"):
         return
@@ -463,6 +543,7 @@ def install_linux(reads, writes):
     ]
     # Resolve the trusted process baseline before /proc becomes inaccessible.
     apply_rlimits(max_memory_mb=2048, max_cpu_seconds=300)
+    _apply_nproc_rlimit()
     mode = os.environ.get("NOOA_CELL_BACKEND", "landlock")
     if mode == "landlock":
         apply_landlock(tuple(rules))
@@ -474,12 +555,14 @@ def install_linux(reads, writes):
 
         if not os.statvfs("/").f_flag & getattr(stat, "ST_RDONLY", 1):
             raise RuntimeError("Bubblewrap root must be read-only")
+        # Defense in depth: stack Landlock inside the private mount namespace.
+        apply_landlock(tuple(rules))
     else:
         raise RuntimeError("Unknown cell execution backend")
-    # Seccomp: deny network/io_uring, cross-process signals, ptrace/process-vm,
-    # namespace entry (unshare/setns/clone NEW*), and return ENOSYS for clone3 so
-    # libc falls back to clone (whose flags we filter). fork/exec stay available
-    # for scientific helpers; without sockets they cannot open network channels.
+    # Seccomp blacklist: network/io_uring, signals, ptrace/process-vm, namespaces,
+    # bpf/perf/userfaultfd, keyring, kexec/modules, mount graph, handle lookups,
+    # swap/reboot/acct/quotactl/personality, and x86 I/O privilege. clone3 -> ENOSYS
+    # so libc falls back to clone (NEW* flags filtered). fork/exec remain for science.
     arch = platform.machine()
     # EPERM denylist (arch-specific numbers).
     deny_eperm = {
@@ -502,6 +585,38 @@ def install_linux(reads, writes):
             427,  # io_uring_register
             272,  # unshare
             308,  # setns
+            298,  # perf_event_open
+            323,  # userfaultfd
+            321,  # bpf
+            250,  # keyctl
+            248,  # add_key
+            249,  # request_key
+            246,  # kexec_load
+            320,  # kexec_file_load
+            175,  # init_module
+            313,  # finit_module
+            176,  # delete_module
+            165,  # mount
+            166,  # umount2
+            155,  # pivot_root
+            428,  # open_tree
+            429,  # move_mount
+            430,  # fsopen
+            431,  # fsconfig
+            432,  # fsmount
+            433,  # fspick
+            304,  # open_by_handle_at
+            303,  # name_to_handle_at
+            87,  # swapon
+            168,  # swapoff
+            169,  # reboot
+            51,  # acct
+            212,  # lookup_dcookie
+            179,  # quotactl
+            135,  # personality
+            172,  # iopl
+            173,  # ioperm
+            154,  # modify_ldt
         ],
         "aarch64": [
             198,  # socket
@@ -522,6 +637,35 @@ def install_linux(reads, writes):
             427,  # io_uring_register
             97,  # unshare
             268,  # setns
+            241,  # perf_event_open
+            282,  # userfaultfd
+            280,  # bpf
+            219,  # keyctl
+            217,  # add_key
+            218,  # request_key
+            104,  # kexec_load
+            294,  # kexec_file_load
+            105,  # init_module
+            273,  # finit_module
+            106,  # delete_module
+            40,  # mount
+            39,  # umount2
+            41,  # pivot_root
+            428,  # open_tree
+            429,  # move_mount
+            430,  # fsopen
+            431,  # fsconfig
+            432,  # fsmount
+            433,  # fspick
+            265,  # open_by_handle_at
+            264,  # name_to_handle_at
+            224,  # swapon
+            225,  # swapoff
+            142,  # reboot
+            89,  # acct
+            18,  # lookup_dcookie
+            60,  # quotactl
+            92,  # personality
         ],
     }
     clone_nr = {"x86_64": 56, "aarch64": 220}

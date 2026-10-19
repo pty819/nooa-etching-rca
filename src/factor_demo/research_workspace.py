@@ -166,7 +166,13 @@ class PythonWorkspace:
         if not self.research_enabled:
             raise PermissionError("Research code execution is disabled in discussion mode")
         from .execution_provenance import artifact_hashes, next_cell, record_cell
-        from .sandboxing import child_environment, ensure_child_subreaper, launch, reap
+        from .sandboxing import (
+            apply_cell_cgroup_pids,
+            child_environment,
+            ensure_child_subreaper,
+            launch,
+            reap,
+        )
 
         ensure_child_subreaper()
 
@@ -228,6 +234,7 @@ class PythonWorkspace:
             stdout, stderr, counters = [], [], [[0, 0], [0, 0]]
             interrupted = None
             timed_out = False
+            apply_cell_cgroup_pids()
             self.process = await asyncio.create_subprocess_exec(
                 *launch(
                     [self.kit / "research_worker.py", config],

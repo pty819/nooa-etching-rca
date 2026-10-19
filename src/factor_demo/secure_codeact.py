@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 import shutil
 import tempfile
 import time
@@ -19,6 +20,7 @@ from pydantic import BaseModel, TypeAdapter
 
 from .cell_wire import MAX_FRAME, decode, dumps, encode, loads
 from .sandboxing import (
+    apply_cell_cgroup_pids,
     child_environment,
     ensure_child_subreaper,
     launch,
@@ -69,6 +71,28 @@ TOOLS = frozenset(
 )
 
 
+def _cell_tool_timeout() -> float:
+    raw = os.environ.get("FACTOR_CELL_TOOL_TIMEOUT", "330").strip()
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise RuntimeError("FACTOR_CELL_TOOL_TIMEOUT must be a number") from error
+    if value <= 0:
+        raise RuntimeError("FACTOR_CELL_TOOL_TIMEOUT must be positive")
+    return value
+
+
+def _cell_max_tool_calls() -> int:
+    raw = os.environ.get("FACTOR_CELL_MAX_TOOL_CALLS", "64").strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError("FACTOR_CELL_MAX_TOOL_CALLS must be an integer") from error
+    if value < 1:
+        raise RuntimeError("FACTOR_CELL_MAX_TOOL_CALLS must be >= 1")
+    return value
+
+
 def contract_types():
     from . import dataset_models, formula_models, research_models
     from .legacy import models as legacy_models
@@ -108,6 +132,8 @@ class ExternalCell:
             for name in TOOLS
             if hasattr(agent, name)
         }
+        self.tool_timeout = _cell_tool_timeout()
+        self.max_tool_calls = _cell_max_tool_calls()
 
     @property
     def docs(self):
@@ -164,6 +190,7 @@ class ExternalCell:
             "checkpoint": str(checkpoint),
         }
         ensure_child_subreaper()
+        apply_cell_cgroup_pids()
         process = await asyncio.create_subprocess_exec(
             *launch([self.kit / "codeact_child.py"], [self.kit], [self.work]),
             cwd=self.work,
@@ -188,13 +215,16 @@ class ExternalCell:
             return b"".join(parts).decode(errors="replace")
 
         errors = asyncio.create_task(error_output())
-        remaining = self.timeout
+        deadline = time.monotonic() + float(self.timeout)
         sequence = 0
         try:
             while True:
-                start = time.monotonic()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"External cell wall-clock budget exhausted ({self.timeout}s)"
+                    )
                 line = await asyncio.wait_for(process.stdout.readline(), max(0.001, remaining))
-                remaining -= time.monotonic() - start
                 if not line:
                     raise RuntimeError("External cell exited without a result: " + await errors)
                 message = loads(line)
@@ -202,10 +232,15 @@ class ExternalCell:
                     raise ValueError("Wrong cell response identity")
                 if message.get("kind") == "tool":
                     sequence += 1
-                    if sequence > 64 or message.get("sequence") != sequence:
+                    if sequence > self.max_tool_calls or message.get("sequence") != sequence:
                         raise ValueError("Invalid tool sequence or too many calls in one cell")
+                    tool_budget = min(self.tool_timeout, deadline - time.monotonic())
+                    if tool_budget <= 0:
+                        raise TimeoutError(
+                            f"External cell wall-clock budget exhausted ({self.timeout}s)"
+                        )
                     try:
-                        value = await asyncio.wait_for(self.dispatch(message), 330)
+                        value = await asyncio.wait_for(self.dispatch(message), tool_budget)
                         reply = {
                             "cell": token,
                             "sequence": sequence,
@@ -214,6 +249,10 @@ class ExternalCell:
                         }
                     except asyncio.CancelledError:
                         raise
+                    except TimeoutError:
+                        raise TimeoutError(
+                            f"External cell wall-clock budget exhausted ({self.timeout}s)"
+                        )
                     except Exception as error:  # noqa: BLE001 - untrusted execution/service boundary
                         detail = (
                             "模型检查或数据请求未完成；宿主保留了状态"
@@ -231,7 +270,9 @@ class ExternalCell:
                     continue
                 if message.get("kind") != "result":
                     raise ValueError("Invalid cell response")
-                await asyncio.wait_for(process.wait(), 10)
+                await asyncio.wait_for(
+                    process.wait(), min(10.0, max(0.001, deadline - time.monotonic()))
+                )
                 if process.returncode:
                     raise RuntimeError("External cell did not exit successfully")
                 self.checkpoint = (
@@ -254,6 +295,9 @@ class ExternalCell:
         except asyncio.CancelledError:
             self.checkpoint = None
             raise
+        except TimeoutError as error:
+            self.checkpoint = None
+            return ExecutionResult(stdout="", error=RuntimeError(str(error)[:4000]))
         except Exception as error:  # noqa: BLE001 - untrusted execution/service boundary
             self.checkpoint = None
             return ExecutionResult(
