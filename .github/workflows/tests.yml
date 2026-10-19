@@ -44,8 +44,8 @@ jobs:
           version: '0.11.3'
       - name: Install locked runtime and test dependencies
         run: uv sync --frozen --group dev
-      - name: Install namespace backend for forced fallback coverage
-        if: matrix.backend == 'bubblewrap'
+      - name: Install bubblewrap (PID ns for Landlock; full backend when selected)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y bubblewrap apparmor

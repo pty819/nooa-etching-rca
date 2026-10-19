@@ -128,7 +128,7 @@ import os
 try:
     open({str(secret)!r}).read()
     raise SystemExit('direct read should fail')
-except PermissionError:
+except OSError:
     pass
 os.symlink({str(secret)!r}, 'state.joblib')
 print('planted')
@@ -388,3 +388,149 @@ def test_m3_formula_ranking_prefers_cv_over_dev():
     }
     ranked = lab.ranking(study)
     assert ranked[0]["id"] == "t-cv"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Landlock/bwrap PoC")
+def test_n2_fork_chain_cannot_outlive_cell(tmp_path):
+    """Rapid setsid fork-exit chain must stop when the cell returns (PID ns / reaper)."""
+    run = _case(tmp_path)
+    beat = run / "workspace" / "heartbeat-chain.txt"
+
+    async def exercise():
+        ws = PythonWorkspace(run)
+        try:
+            result = await ws.execute(
+                f"""
+import os, time
+path = {str(beat)!r}
+open(path, 'w').write('0')
+if os.fork() == 0:
+    os.setsid()
+    for fd in (0, 1, 2):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    end = time.time() + 8
+    n = 0
+    while time.time() < end:
+        n += 1
+        if n % 2000 == 0:
+            open(path, 'w').write(f'{{time.time():.1f}}')
+        pid = os.fork()
+        if pid > 0:
+            os._exit(0)
+    os._exit(0)
+time.sleep(0.2)
+print('spawned')
+""",
+                60,
+            )
+            assert result["ok"], result.get("output")
+            first = beat.read_text().strip() if beat.exists() else "0"
+            await asyncio.sleep(2.0)
+            second = beat.read_text().strip() if beat.exists() else first
+            assert first == second, (first, second)
+        finally:
+            await ws.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="seccomp PoC")
+def test_n2_cell_cannot_sigqueue_reaper_or_host(tmp_path):
+    """rt_sigqueueinfo must not kill the supervisor or an unrelated same-uid process."""
+    import subprocess
+    import time
+
+    run = _case(tmp_path)
+    beat = run / "workspace" / "heartbeat-sig.txt"
+    victim = subprocess.Popen(["sleep", "120"])
+    try:
+
+        async def exercise():
+            ws = PythonWorkspace(run)
+            try:
+                result = await ws.execute(
+                    f"""
+import os, time, ctypes, struct
+path = {str(beat)!r}
+open(path, 'w').write('0')
+if os.fork() == 0:
+    os.setsid()
+    for fd in (0, 1, 2):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    for i in range(1, 20):
+        open(path, 'w').write(str(i))
+        time.sleep(0.4)
+    os._exit(0)
+time.sleep(0.2)
+import platform
+libc = ctypes.CDLL(None, use_errno=True)
+nr = 129 if platform.machine() == 'x86_64' else 138
+buf = ctypes.create_string_buffer(128)
+struct.pack_into('iii', buf, 0, 9, 0, -1)
+ctypes.set_errno(0)
+r_parent = libc.syscall(nr, os.getppid(), 9, buf)
+e_parent = ctypes.get_errno()
+ctypes.set_errno(0)
+r_host = libc.syscall(nr, {victim.pid}, 9, buf)
+e_host = ctypes.get_errno()
+print(f'sigqueue_parent={{r_parent}}:{{e_parent}} sigqueue_host={{r_host}}:{{e_host}}')
+""",
+                    60,
+                )
+                assert result["ok"], result.get("output")
+                line = [x for x in result["output"].splitlines() if "sigqueue_parent=" in x][-1]
+                assert "sigqueue_parent=-1:" in line
+                assert "sigqueue_host=-1:" in line
+                first = beat.read_text().strip() if beat.exists() else "0"
+                await asyncio.sleep(2.0)
+                second = beat.read_text().strip() if beat.exists() else first
+                assert first == second or int(second) <= int(first) + 1, (first, second)
+            finally:
+                await ws.close()
+
+        asyncio.run(exercise())
+        time.sleep(0.2)
+        assert victim.poll() is None, "host process must survive sandboxed rt_sigqueueinfo"
+    finally:
+        if victim.poll() is None:
+            victim.kill()
+            victim.wait(timeout=5)
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="seccomp PoC")
+def test_n4_seccomp_denies_unshare_and_clone3(tmp_path):
+    run = _case(tmp_path)
+
+    async def exercise():
+        ws = PythonWorkspace(run)
+        try:
+            result = await ws.execute(
+                """
+import ctypes
+libc = ctypes.CDLL(None, use_errno=True)
+out = []
+ctypes.set_errno(0)
+r = libc.unshare(0x10000000)  # CLONE_NEWUSER
+out.append(f'unshare={r}:errno={ctypes.get_errno()}')
+ctypes.set_errno(0)
+r = libc.syscall(435, None)  # clone3
+out.append(f'clone3={r}:errno={ctypes.get_errno()}')
+print('||'.join(out))
+""",
+                60,
+            )
+            assert result["ok"], result["output"]
+            line = [x for x in result["output"].splitlines() if "unshare=" in x][-1]
+            assert "unshare=-1:" in line
+            assert "clone3=-1:" in line
+            assert "errno=38" in line or "errno=1" in line
+        finally:
+            await ws.close()
+
+    asyncio.run(exercise())

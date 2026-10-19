@@ -36,7 +36,10 @@ macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap�
 ## Host path integrity and process reaping
 
 - Host writes into the sandbox workspace (`research_cells`, JSON outputs, formula/`state.joblib` copies, font cache seeds) refuse symbolic links (`O_NOFOLLOW` / realpath containment). A cell cannot redirect host I/O outside the workspace by planting symlinks.
-- On Linux, cell supervisors become child subreapers and `reap()` SIGKILLs the process group **and** every `/proc` descendant, so `setsid()` grandchildren do not survive a finished cell. Bubblewrap additionally uses a private PID namespace (`--unshare-all --die-with-parent`).
-- Linux seccomp denies `socket`/`socketpair`, `io_uring_*`, ptrace/process-vm, and cross-process signals. `fork`/`exec` remain for scientific helpers (e.g. subprocess); without sockets or io_uring they cannot open network channels. Prefer bubblewrap when a private network/PID namespace is required.
-- macOS applies `RLIMIT_AS` / `RLIMIT_CPU` in the child bootstrap alongside `(deny default)` sandbox-exec. Full PID-namespace isolation is Linux/bubblewrap-only.
-
+- **Bubblewrap backend**: private mount root plus `--unshare-all --die-with-parent` (PID, net, mount, …). Killing the bwrap supervisor tears down the whole namespace; `setsid` / fork-chains cannot outlive the cell.
+- **Landlock backend**: filesystem rules come from Landlock. Process isolation is layered as:
+  1. When `bwrap` is installed, the cell is additionally wrapped with `bwrap --unshare-pid --die-with-parent` (PID namespace only; FS policy remains Landlock). This is the supported way to make setsid/fork-chain orphans die with the cell.
+  2. A trusted `cell_reaper` (outside seccomp) is a child subreaper, sets `PR_SET_PDEATHSIG` on the worker, and after the worker exits SIGSTOPs then SIGKILLs live `/proc` descendants.
+  3. If `bwrap` is unavailable, PID-namespace teardown is not guaranteed; the reaper fallback still reaps ordinary setsid grandchildren, but a maximal fork-chain may race a pure `/proc` scan. Install bubblewrap for production Landlock deployments.
+- **Linux seccomp** (both backends, after Landlock/bwrap bootstrap): denies `socket`/`socketpair`, `io_uring_*`, `ptrace`, `process_vm_*`, `pidfd_open`/`pidfd_getfd`/`pidfd_send_signal`, and cross-process signal delivery (`kill`/`tkill`/`tgkill`/`rt_sigqueueinfo`/`rt_tgsigqueueinfo`). Also denies `unshare`/`setns`, returns `ENOSYS` for `clone3` (so libc falls back to `clone`), and rejects `clone` flags that create namespaces (`CLONE_NEW*`). `fork`/`clone` without namespace flags and `exec` remain for scientific helpers; without sockets they cannot open network channels. Wrong architecture and the x86_64 x32 ABI table are rejected.
+- **macOS**: `(deny default)` sandbox-exec plus `RLIMIT_AS` / `RLIMIT_CPU` in the child bootstrap. No Linux-style PID namespace or seccomp filter; do not treat macOS as equivalent process isolation to Linux bubblewrap.

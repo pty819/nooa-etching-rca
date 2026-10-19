@@ -221,6 +221,54 @@ def mac_profile(reads, writes):
     )
 
 
+def _pid_namespace_prefix():
+    """Best-effort private PID namespace for Landlock cells via bubblewrap.
+
+    Filesystem confinement stays Landlock's job; this only adds `--unshare-pid`
+    so killing namespace init reaps setsid/fork-chain grandchildren. Returns []
+    when bwrap is missing or the probe fails (documented fallback).
+    """
+    import shutil
+    import subprocess
+
+    binary = shutil.which("bwrap")
+    if not binary:
+        return []
+    probe = subprocess.run(
+        [
+            binary,
+            "--unshare-pid",
+            "--die-with-parent",
+            "--bind",
+            "/",
+            "/",
+            "--proc",
+            "/proc",
+            "--dev",
+            "/dev",
+            "/usr/bin/true",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if probe.returncode != 0:
+        return []
+    return [
+        binary,
+        "--unshare-pid",
+        "--die-with-parent",
+        "--bind",
+        "/",
+        "/",
+        "--proc",
+        "/proc",
+        "--dev",
+        "/dev",
+    ]
+
+
 def launch(python_args, reads, writes):
     if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
         return [
@@ -235,10 +283,10 @@ def launch(python_args, reads, writes):
     if sys.platform.startswith("linux"):
         if linux_backend() == "bubblewrap":
             return bubblewrap_command(python_args, reads, writes)
-        # Landlock has no PID namespace: wrap the cell in a subreaper that kills
-        # setsid() grandchildren when the worker exits.
+        # Landlock FS + subreaper; wrap with bwrap PID ns when available so
+        # setsid/fork-chain orphans die with namespace init.
         reaper = str(Path(__file__).resolve().with_name("cell_reaper.py"))
-        return [
+        command = [
             sys.executable,
             "-I",
             "-u",
@@ -248,6 +296,7 @@ def launch(python_args, reads, writes):
             "-u",
             *map(str, python_args),
         ]
+        return [*_pid_namespace_prefix(), *command]
     raise RuntimeError("No enforced execution backend on this platform")
 
 
@@ -427,17 +476,61 @@ def install_linux(reads, writes):
             raise RuntimeError("Bubblewrap root must be read-only")
     else:
         raise RuntimeError("Unknown cell execution backend")
-    # Deny socket creation (incl. socketpair), io_uring, ptrace/process-memory,
-    # and signals to other processes. fork/exec remain for scientific helpers
-    # (subprocess, joblib); without sockets they cannot open network channels.
+    # Seccomp: deny network/io_uring, cross-process signals, ptrace/process-vm,
+    # namespace entry (unshare/setns/clone NEW*), and return ENOSYS for clone3 so
+    # libc falls back to clone (whose flags we filter). fork/exec stay available
+    # for scientific helpers; without sockets they cannot open network channels.
     arch = platform.machine()
-    numbers = {
-        # socket, socketpair, ptrace, process_vm_readv/writev, kill, tkill, tgkill,
-        # pidfd_open, pidfd_send_signal, io_uring_setup/enter/register
-        "x86_64": [41, 53, 101, 310, 311, 62, 200, 234, 424, 434, 425, 426, 427],
-        "aarch64": [198, 199, 117, 270, 271, 129, 130, 131, 424, 434, 425, 426, 427],
+    # EPERM denylist (arch-specific numbers).
+    deny_eperm = {
+        "x86_64": [
+            41,  # socket
+            53,  # socketpair
+            101,  # ptrace
+            310,  # process_vm_readv
+            311,  # process_vm_writev
+            62,  # kill
+            200,  # tkill
+            234,  # tgkill
+            129,  # rt_sigqueueinfo
+            297,  # rt_tgsigqueueinfo
+            424,  # pidfd_send_signal
+            434,  # pidfd_open
+            438,  # pidfd_getfd
+            425,  # io_uring_setup
+            426,  # io_uring_enter
+            427,  # io_uring_register
+            272,  # unshare
+            308,  # setns
+        ],
+        "aarch64": [
+            198,  # socket
+            199,  # socketpair
+            117,  # ptrace
+            270,  # process_vm_readv
+            271,  # process_vm_writev
+            129,  # kill
+            130,  # tkill
+            131,  # tgkill
+            138,  # rt_sigqueueinfo
+            139,  # rt_tgsigqueueinfo
+            424,  # pidfd_send_signal
+            434,  # pidfd_open
+            438,  # pidfd_getfd
+            425,  # io_uring_setup
+            426,  # io_uring_enter
+            427,  # io_uring_register
+            97,  # unshare
+            268,  # setns
+        ],
     }
-    if arch not in numbers:
+    clone_nr = {"x86_64": 56, "aarch64": 220}
+    clone3_nr = {"x86_64": 435, "aarch64": 435}
+    # Namespace-related clone flags (NEWNS|NEWCGROUP|NEWUTS|NEWIPC|NEWUSER|NEWPID|NEWNET).
+    clone_ns_mask = (
+        0x00020000 | 0x02000000 | 0x04000000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000
+    )
+    if arch not in deny_eperm:
         raise RuntimeError("Unsupported seccomp architecture")
 
     class Filter(ctypes.Structure):
@@ -451,19 +544,65 @@ def install_linux(reads, writes):
     class Program(ctypes.Structure):
         _fields_ = [("len", ctypes.c_ushort), ("filter", ctypes.POINTER(Filter))]
 
+    BPF_LD = 0x00
+    BPF_JMP = 0x05
+    BPF_RET = 0x06
+    BPF_W = 0x00
+    BPF_ABS = 0x20
+    BPF_JEQ = 0x10
+    BPF_JGE = 0x30
+    BPF_JSET = 0x40
+    BPF_K = 0x00
+    SECCOMP_RET_KILL = 0x80000000
+    SECCOMP_RET_ERRNO = 0x00050000
+    SECCOMP_RET_ALLOW = 0x7FFF0000
+    ENOSYS = 38
+    EPERM = 1
+
     expected_arch = 0xC000003E if arch == "x86_64" else 0xC00000B7
-    instructions = [
-        (0x20, 0, 0, 4),
-        (0x15, 1, 0, expected_arch),
-        (0x06, 0, 0, 0x80000000),
-        (0x20, 0, 0, 0),
+    instructions: list[tuple[int, int, int, int]] = [
+        # A = arch
+        (BPF_LD | BPF_W | BPF_ABS, 0, 0, 4),
+        (BPF_JMP | BPF_JEQ | BPF_K, 1, 0, expected_arch),
+        (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL),
+        # A = nr
+        (BPF_LD | BPF_W | BPF_ABS, 0, 0, 0),
     ]
     if arch == "x86_64":
-        # Reject the alternate x32 syscall table as well as native forbidden calls.
-        instructions.extend([(0x35, 0, 1, 0x40000000), (0x06, 0, 0, 0x00050000 | 1)])
-    for number in numbers[arch]:
-        instructions.extend([(0x15, 0, 1, number), (0x06, 0, 0, 0x00050000 | 1)])
-    instructions.append((0x06, 0, 0, 0x7FFF0000))
+        # Reject the alternate x32 syscall table (NR | 0x40000000).
+        instructions.extend(
+            [
+                (BPF_JMP | BPF_JGE | BPF_K, 0, 1, 0x40000000),
+                (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+            ]
+        )
+    # clone3 -> ENOSYS (libc retries with clone).
+    instructions.extend(
+        [
+            (BPF_JMP | BPF_JEQ | BPF_K, 0, 1, clone3_nr[arch]),
+            (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | ENOSYS),
+        ]
+    )
+    # clone with any NEW* namespace bit -> EPERM; plain fork/clone for threads OK.
+    instructions.extend(
+        [
+            (BPF_JMP | BPF_JEQ | BPF_K, 0, 4, clone_nr[arch]),
+            # A = args[0] low 32 bits (flags)
+            (BPF_LD | BPF_W | BPF_ABS, 0, 0, 16),
+            (BPF_JMP | BPF_JSET | BPF_K, 0, 1, clone_ns_mask),
+            (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+            # restore A = nr for subsequent compares
+            (BPF_LD | BPF_W | BPF_ABS, 0, 0, 0),
+        ]
+    )
+    for number in deny_eperm[arch]:
+        instructions.extend(
+            [
+                (BPF_JMP | BPF_JEQ | BPF_K, 0, 1, number),
+                (BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO | EPERM),
+            ]
+        )
+    instructions.append((BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW))
     array = (Filter * len(instructions))(*(Filter(*i) for i in instructions))
     program = Program(len(instructions), array)
     libc = ctypes.CDLL(None, use_errno=True)
@@ -500,20 +639,37 @@ def _proc_children(root_pid: int) -> set[int]:
 
 
 def _kill_tree(root_pid: int) -> None:
-    """SIGKILL the process group and every /proc descendant (setsid-safe)."""
-    for _ in range(3):
+    """SIGKILL the process group and every live /proc descendant (setsid-safe).
+
+    Freeze with SIGSTOP first so a fork-chain cannot outrun a single snapshot.
+    """
+    import time
+
+    deadline = time.monotonic() + 3.0
+    quiet = 0
+    while time.monotonic() < deadline:
         descendants = _proc_children(root_pid)
         try:
             os.killpg(root_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        if not descendants:
+            quiet += 1
+            if quiet >= 3:
+                break
+            time.sleep(0.002)
+            continue
+        quiet = 0
         for pid in descendants:
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+        for pid in _proc_children(root_pid) | descendants:
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-        if not _proc_children(root_pid):
-            break
 
 
 def ensure_child_subreaper() -> None:
