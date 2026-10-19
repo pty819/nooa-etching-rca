@@ -27,11 +27,7 @@ def prepare_workspace(data: Path, run: Path) -> dict:
         "recipe.json",
         "case.json",
     ]
-    if (
-        data.is_file()
-        or (data / "dataset.json").is_file()
-        or not all((data / name).is_file() for name in legacy_fdc_files)
-    ):
+    if data.is_file() or not all((data / name).is_file() for name in legacy_fdc_files):
         from .datasets import prepare_generic_workspace
 
         prepare_generic_workspace(data, run)
@@ -59,6 +55,8 @@ def prepare_workspace(data: Path, run: Path) -> dict:
         frame.filter(pl.col("run_id").is_in(ids)).write_parquet(public / f"{target}.parquet")
     for name in ["sensors.json", "catalog.json", "recipe.json", "case.json"]:
         shutil.copyfile(data / name, public / name)
+    if (data / "dataset.json").is_file():
+        shutil.copyfile(data / "dataset.json", public / "dataset.json")
     from .dataset_adapter import safe_path
 
     for row in meta.iter_rows(named=True):
@@ -168,7 +166,9 @@ class PythonWorkspace:
         if not self.research_enabled:
             raise PermissionError("Research code execution is disabled in discussion mode")
         from .execution_provenance import artifact_hashes, next_cell, record_cell
-        from .sandboxing import child_environment, launch, reap
+        from .sandboxing import child_environment, ensure_child_subreaper, launch, reap
+
+        ensure_child_subreaper()
 
         async with self.lock:
             if self.dataset_session is not None:
@@ -184,17 +184,17 @@ class PythonWorkspace:
                 before = artifact_hashes(self.run)
             except ValueError:
                 before = {}
-            cells = self.work / "research_cells"
-            cells.mkdir(exist_ok=True)
+            from .path_guard import ensure_real_dir, write_text_nofollow
+
+            cells = ensure_real_dir(self.work / "research_cells", root=self.work)
             filename = cells / f"cell_{cell:04d}.py"
-            filename.write_text(code)
+            write_text_nofollow(filename, code, root=self.work)
             # The child's source/config are immutable to that child, even on Linux.
             private = self.run / ".execution" / f"cell_{cell:06d}"
             private.mkdir(parents=True, exist_ok=False)
             source = private / "source.py"
             source.write_text(script.read_text() if script else code)
-            states = self.work / ".cell-state"
-            states.mkdir(exist_ok=True)
+            states = ensure_real_dir(self.work / ".cell-state", root=self.work)
             checkpoint = states / f"{cell:06d}.pickle"
             metadata = states / f"{cell:06d}.json"
             config = private / "request.json"
@@ -310,7 +310,8 @@ class PythonWorkspace:
             record["execution_ref"] = proof
             with (self.run / "execution.jsonl").open("a") as out:
                 out.write(json.dumps(record, ensure_ascii=False) + "\n")
-            write_json(filename.with_suffix(".output.json"), result)
+            cells = ensure_real_dir(self.work / "research_cells", root=self.work)
+            write_json(cells / f"cell_{cell:04d}.output.json", result, root=self.work)
             self.emit(
                 "tool.end",
                 cell=cell,

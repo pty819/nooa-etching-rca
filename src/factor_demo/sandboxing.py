@@ -235,7 +235,19 @@ def launch(python_args, reads, writes):
     if sys.platform.startswith("linux"):
         if linux_backend() == "bubblewrap":
             return bubblewrap_command(python_args, reads, writes)
-        return [sys.executable, "-I", "-u", *map(str, python_args)]
+        # Landlock has no PID namespace: wrap the cell in a subreaper that kills
+        # setsid() grandchildren when the worker exits.
+        reaper = str(Path(__file__).resolve().with_name("cell_reaper.py"))
+        return [
+            sys.executable,
+            "-I",
+            "-u",
+            reaper,
+            sys.executable,
+            "-I",
+            "-u",
+            *map(str, python_args),
+        ]
     raise RuntimeError("No enforced execution backend on this platform")
 
 
@@ -274,15 +286,13 @@ def prepare_font_cache():
 
 def seed_worker_fonts(cache):
     import re
-    import shutil
+
+    from .path_guard import copy_regular_nofollow, ensure_real_dir
 
     source = font_cache_seed()
-    if not source.is_dir():
+    if not source.is_dir() or source.is_symlink():
         return
-    target = cache / "mpl"
-    if target.is_symlink():
-        raise RuntimeError("Worker font cache must not be a symbolic link")
-    target.mkdir(parents=True, exist_ok=True)
+    target = ensure_real_dir(Path(cache) / "mpl")
     for path in source.iterdir():
         if (
             not re.fullmatch(r"fontlist-v[0-9]+(?:\.[0-9]+)*\.json", path.name)
@@ -291,15 +301,17 @@ def seed_worker_fonts(cache):
         ):
             continue
         dest = target / path.name
-        if not dest.is_symlink() and not dest.exists() and path.stat().st_size <= 8 * 1024 * 1024:
-            shutil.copyfile(path, dest)
+        if dest.exists() or dest.is_symlink():
+            continue
+        if path.stat().st_size > 8 * 1024 * 1024:
+            continue
+        copy_regular_nofollow(path, dest, required_root=source)
 
 
 def child_environment(work: Path, **extra):
-    cache = work / ".cache"
-    if cache.is_symlink():
-        raise RuntimeError("Worker cache must not be a symbolic link")
-    cache.mkdir(parents=True, exist_ok=True)
+    from .path_guard import ensure_real_dir
+
+    cache = ensure_real_dir(Path(work) / ".cache", root=work)
     seed_worker_fonts(cache)
     environment = {
         "PATH": str(Path(sys.executable).parent) + ":/usr/bin:/bin",
@@ -344,8 +356,43 @@ def prepare_guard_modules(kit: Path):
         (kit / name).write_text(source)
 
 
+def _apply_host_rlimits():
+    """Memory/CPU caps for Linux and macOS children (soft == hard)."""
+    import resource
+
+    # Mirror NOOA apply_rlimits: headroom above current address space + CPU seconds.
+    try:
+        baseline = 0
+        status = Path("/proc/self/status")
+        if status.is_file():
+            for line in status.read_text().splitlines():
+                if line.startswith("VmSize:"):
+                    baseline = int(line.split()[1]) * 1024
+                    break
+        limit = baseline + 2048 * 1024 * 1024
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if hard != resource.RLIM_INFINITY:
+            limit = min(limit, hard)
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except (OSError, ValueError):
+        # macOS may reject some RLIMIT_AS values; CPU still applies.
+        pass
+    try:
+        secs = 300
+        _, hard = resource.getrlimit(resource.RLIMIT_CPU)
+        if hard != resource.RLIM_INFINITY:
+            secs = min(secs, hard)
+        resource.setrlimit(resource.RLIMIT_CPU, (secs, secs))
+    except (OSError, ValueError):
+        pass
+
+
 def install_linux(reads, writes):
     """Applied by the trusted fresh child bootstrap before loading user code/state."""
+    # rlimits are available on both Linux and macOS; filesystem backends differ.
+    if sys.platform == "darwin":
+        _apply_host_rlimits()
+        return
     if not sys.platform.startswith("linux"):
         return
     import ctypes
@@ -380,12 +427,15 @@ def install_linux(reads, writes):
             raise RuntimeError("Bubblewrap root must be read-only")
     else:
         raise RuntimeError("Unknown cell execution backend")
-    # Deny socket creation (including AF_UNIX), ptrace/process-memory access and
-    # signals to other processes. The parent retains authority to reap children.
+    # Deny socket creation (incl. socketpair), io_uring, ptrace/process-memory,
+    # and signals to other processes. fork/exec remain for scientific helpers
+    # (subprocess, joblib); without sockets they cannot open network channels.
     arch = platform.machine()
     numbers = {
-        "x86_64": [41, 101, 310, 311, 62, 200, 234, 424, 434],
-        "aarch64": [198, 117, 270, 271, 129, 130, 131, 424, 434],
+        # socket, socketpair, ptrace, process_vm_readv/writev, kill, tkill, tgkill,
+        # pidfd_open, pidfd_send_signal, io_uring_setup/enter/register
+        "x86_64": [41, 53, 101, 310, 311, 62, 200, 234, 424, 434, 425, 426, 427],
+        "aarch64": [198, 199, 117, 270, 271, 129, 130, 131, 424, 434, 425, 426, 427],
     }
     if arch not in numbers:
         raise RuntimeError("Unsupported seccomp architecture")
@@ -421,11 +471,66 @@ def install_linux(reads, writes):
         raise OSError(ctypes.get_errno(), "Cannot install seccomp; execution refused")
 
 
+def _proc_children(root_pid: int) -> set[int]:
+    """All descendants of root_pid via /proc (covers setsid grandchildren)."""
+    if not Path("/proc").is_dir():
+        return set()
+    parents: dict[int, list[int]] = {}
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            pid = int(entry.name)
+            raw = (entry / "stat").read_text()
+            close = raw.rfind(")")
+            fields = raw[close + 2 :].split()
+            ppid = int(fields[1])
+            parents.setdefault(ppid, []).append(pid)
+        except (OSError, ValueError, IndexError):
+            continue
+    found: set[int] = set()
+    stack = [root_pid]
+    while stack:
+        current = stack.pop()
+        for child in parents.get(current, []):
+            if child not in found:
+                found.add(child)
+                stack.append(child)
+    return found
+
+
+def _kill_tree(root_pid: int) -> None:
+    """SIGKILL the process group and every /proc descendant (setsid-safe)."""
+    for _ in range(3):
+        descendants = _proc_children(root_pid)
+        try:
+            os.killpg(root_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for pid in descendants:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if not _proc_children(root_pid):
+            break
+
+
+def ensure_child_subreaper() -> None:
+    """Become subreaper so setsid orphans re-parent here instead of PID 1."""
+    if not sys.platform.startswith("linux"):
+        return
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    # PR_SET_CHILD_SUBREAPER = 36
+    libc.prctl(36, 1, 0, 0, 0)
+
+
 async def reap(process):
     if process is None:
         return
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    ensure_child_subreaper()
+    _kill_tree(process.pid)
     await process.wait()
+    _kill_tree(process.pid)
