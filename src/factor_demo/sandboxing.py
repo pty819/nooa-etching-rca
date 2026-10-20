@@ -64,8 +64,10 @@ def linux_backend():
     import subprocess
 
     requested = os.environ.get("FACTOR_LINUX_BACKEND", "auto")
-    if requested not in {"auto", "landlock", "bubblewrap"}:
-        raise RuntimeError("FACTOR_LINUX_BACKEND must be auto, landlock or bubblewrap")
+    if requested not in {"auto", "landlock", "bubblewrap", "process"}:
+        raise RuntimeError("FACTOR_LINUX_BACKEND must be auto, landlock, bubblewrap or process")
+    if requested == "process":
+        return "process"
     abi = landlock_abi()
     if requested != "bubblewrap" and abi >= 1:
         return "landlock"
@@ -97,6 +99,19 @@ def linux_backend():
         reason = probe.stderr.strip()[:500]
     else:
         reason = "bubblewrap is not installed"
+    if requested == "auto" and not _env_flag("FACTOR_STRICT_BACKEND"):
+        # Unprivileged containers (kernel < 5.13, no nested namespaces): degrade to
+        # rlimits + best-effort seccomp; filesystem isolation is the container's job.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Landlock (ABI %s) and bubblewrap unavailable (%s); falling back to the "
+            "'process' backend: no filesystem isolation beyond the container. Set "
+            "FACTOR_STRICT_BACKEND=1 to refuse instead.",
+            abi,
+            reason,
+        )
+        return "process"
     raise RuntimeError(
         f"No enforced Linux filesystem backend for {requested} (Landlock ABI {abi}): {reason}"
     )
@@ -297,7 +312,8 @@ def launch(python_args, reads, writes):
             *map(str, python_args),
         ]
     if sys.platform.startswith("linux"):
-        if linux_backend() == "bubblewrap":
+        backend = linux_backend()
+        if backend == "bubblewrap":
             return bubblewrap_command(python_args, reads, writes)
         # Landlock FS + subreaper; require bwrap PID ns unless explicitly opted out.
         reaper = str(Path(__file__).resolve().with_name("cell_reaper.py"))
@@ -311,6 +327,9 @@ def launch(python_args, reads, writes):
             "-u",
             *map(str, python_args),
         ]
+        if backend == "process":
+            # No namespaces: subreaper + process-group kill (reap) tear down the tree.
+            return command
         prefix = _pid_namespace_prefix()
         if not prefix and not _allow_landlock_without_pidns():
             raise RuntimeError(
@@ -411,6 +430,10 @@ def child_environment(work: Path, **extra):
         "FACTOR_CELL_CGROUP",
         "FACTOR_FONT_CACHE_DIR",
         "FACTOR_ALLOW_LANDLOCK_WITHOUT_PIDNS",
+        "FACTOR_CELL_UID",
+        "FACTOR_CELL_GID",
+        "FACTOR_CELL_FSIZE_MB",
+        "FACTOR_CELL_NOFILE",
     ):
         if key in os.environ:
             environment[key] = os.environ[key]
@@ -497,6 +520,52 @@ def apply_cell_cgroup_pids(max_pids: int | None = None) -> Path | None:
         return None
 
 
+def _env_int(name: str, default: int, minimum: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be an integer") from error
+    if value < minimum:
+        raise RuntimeError(f"{name} must be >= {minimum}")
+    return value
+
+
+def _apply_process_rlimits() -> None:
+    """Extra caps for the namespace-free 'process' backend (file size, open files)."""
+    import resource
+
+    caps = {
+        resource.RLIMIT_FSIZE: _env_int("FACTOR_CELL_FSIZE_MB", 1024, 1) * 1024 * 1024,
+        resource.RLIMIT_NOFILE: _env_int("FACTOR_CELL_NOFILE", 1024, 64),
+    }
+    for kind, limit in caps.items():
+        try:
+            _soft, hard = resource.getrlimit(kind)
+            value = limit if hard == resource.RLIM_INFINITY else min(limit, hard)
+            resource.setrlimit(kind, (value, value))
+        except (OSError, ValueError):
+            pass
+
+
+def _drop_privileges(writes) -> None:
+    """When root and FACTOR_CELL_UID is set, hand scratch dirs to that uid and drop to it."""
+    raw = os.environ.get("FACTOR_CELL_UID", "").strip()
+    if os.geteuid() != 0 or not raw:
+        return
+    uid = _env_int("FACTOR_CELL_UID", 0, 1)
+    gid = _env_int("FACTOR_CELL_GID", uid, 1)
+    for root in writes:
+        for directory, dirs, files in os.walk(root):
+            for name in [directory, *(os.path.join(directory, f) for f in dirs + files)]:
+                os.lchown(name, uid, gid)
+    os.setgroups([])
+    os.setgid(gid)
+    os.setuid(uid)
+    if os.getuid() != uid or os.geteuid() != uid:
+        raise RuntimeError("Privilege drop failed; execution refused")
+
+
 def uuid_like() -> str:
     import uuid
 
@@ -564,7 +633,12 @@ def install_linux(reads, writes):
     apply_rlimits(max_memory_mb=2048, max_cpu_seconds=300)
     _apply_nproc_rlimit()
     mode = os.environ.get("NOOA_CELL_BACKEND", "landlock")
-    if mode == "landlock":
+    if mode == "process":
+        # No filesystem confinement here: relies on the container (read-only root).
+        _apply_process_rlimits()
+        _drop_privileges(writes)
+        os.chdir(Path(writes[0]).resolve())
+    elif mode == "landlock":
         apply_landlock(tuple(rules))
     elif mode == "bubblewrap":
         marker = Path("/.nooa-cell-backend")
@@ -694,6 +768,9 @@ def install_linux(reads, writes):
         0x00020000 | 0x02000000 | 0x04000000 | 0x08000000 | 0x10000000 | 0x20000000 | 0x40000000
     )
     if arch not in deny_eperm:
+        if mode == "process":
+            sys.stderr.write("warning: seccomp unsupported on this architecture; skipped\n")
+            return
         raise RuntimeError("Unsupported seccomp architecture")
 
     class Filter(ctypes.Structure):
@@ -770,6 +847,11 @@ def install_linux(reads, writes):
     program = Program(len(instructions), array)
     libc = ctypes.CDLL(None, use_errno=True)
     if libc.prctl(38, 1, 0, 0, 0) or libc.prctl(22, 2, ctypes.byref(program), 0, 0):
+        if mode == "process":
+            sys.stderr.write(
+                f"warning: seccomp unavailable (errno {ctypes.get_errno()}); skipped\n"
+            )
+            return
         raise OSError(ctypes.get_errno(), "Cannot install seccomp; execution refused")
 
 

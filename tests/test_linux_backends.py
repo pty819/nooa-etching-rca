@@ -36,6 +36,7 @@ def test_missing_landlock_selects_only_a_working_namespace_backend(monkeypatch):
         "run",
         lambda *a, **kw: SimpleNamespace(returncode=1, stderr="user namespace unavailable"),
     )
+    monkeypatch.setenv("FACTOR_STRICT_BACKEND", "1")
     with pytest.raises(RuntimeError, match="No enforced Linux"):
         sandboxing.linux_backend()
 

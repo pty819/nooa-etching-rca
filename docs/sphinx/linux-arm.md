@@ -84,3 +84,30 @@ Runtime checks包含Linux x86_64、[原生Linux ARM64 runner](https://docs.githu
 完整NAS回归启动时收集110项；后续新增的缓存符号链接反例单独运行，因此没有把两次运行相加冒称一次111项NAS全量验收。CI在最终代码上完整收集111项。NAS的原始SD卡首次失败、字体超时和后续重试均保留记录。
 
 以上证明Linux ARM上的自由代码、动态划分、主集回退、独立审查及图文交付可以连通，不能据此声称找到物理根因或完成多场景盲评。独立审查仍提示子集选择依据的证据链接与样本粒度说明可进一步加强。
+
+## Kubernetes容器（无Landlock、无嵌套命名空间）
+
+内核<5.13（无Landlock）且容器内不允许bubblewrap创建命名空间时，`auto`会记录警告并回退到`process`后端；也可显式设置`FACTOR_LINUX_BACKEND=process`。该后端不需要任何特权或命名空间：子进程独立进程组运行，施加CPU/内存/文件大小/进程数/打开文件数rlimit与宿主墙钟超时（超时杀死整个进程组），seccomp可用则安装、不可用仅记录警告。**它不做文件系统隔离，完全依赖容器**，因此推荐：
+
+- `readOnlyRootFilesystem: true`，仅把可写工作目录（cell scratch、`TMPDIR`）挂为`emptyDir`；
+- `runAsNonRoot: true`与固定`runAsUser`（若必须以root启动，可设`FACTOR_CELL_UID`/`FACTOR_CELL_GID`让cell降权）；
+- `allowPrivilegeEscalation: false`、`capabilities.drop: [ALL]`、`seccompProfile: RuntimeDefault`；
+- 不要把API密钥以文件形式挂进cell可读路径；cell环境变量已被清空，但同一容器内的文件对cell可读；
+- 可选NetworkPolicy仅放行模型网关等必要出口（seccomp已在cell内拒绝`socket`，NetworkPolicy是额外保障）。
+- 需要拒绝回退时设置`FACTOR_STRICT_BACKEND=1`。
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities: {drop: [ALL]}
+  seccompProfile: {type: RuntimeDefault}
+env:
+  - {name: FACTOR_LINUX_BACKEND, value: process}
+  - {name: TMPDIR, value: /work/tmp}
+volumeMounts:
+  - {name: work, mountPath: /work}
+# volumes: [{name: work, emptyDir: {sizeLimit: 4Gi}}]
+```
