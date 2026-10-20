@@ -120,6 +120,22 @@ def execution_info():
     }
 
 
+def dotenv_warnings(roots=None):
+    """Warn about .env files that sandboxed cells must never be allowed to read."""
+    if roots is None:
+        roots = [Path.cwd(), Path(__file__).resolve().parents[2]]
+    found = []
+    for root in roots:
+        path = Path(root) / ".env"
+        if path.exists() and path not in found:
+            found.append(path)
+    return [
+        f"{path} exists: cells cannot read it (Landlock); keep LITELLM_MODE=PRODUCTION "
+        "in the cell environment and never whitelist .env (it holds API keys)"
+        for path in found
+    ]
+
+
 def interpreter_links(allowed):
     """Preserve version aliases used by venv interpreter symlinks (not extra mounts)."""
     pending = [Path(sys.executable), Path(getattr(sys, "_base_executable", sys.executable))]
@@ -378,6 +394,9 @@ def child_environment(work: Path, **extra):
         "MPLBACKEND": "Agg",
         "PYTHONUNBUFFERED": "1",
         "LITELLM_LOCAL_MODEL_COST_MAP": "True",
+        # DEV mode makes `import litellm` call load_dotenv(), which walks up to the
+        # project-root .env; Landlock denies that open() and the import crashes.
+        "LITELLM_MODE": "PRODUCTION",
         "POLARS_MAX_THREADS": "2",
         "OPENBLAS_NUM_THREADS": "1",
         "OMP_NUM_THREADS": "1",
