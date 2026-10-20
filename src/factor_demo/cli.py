@@ -70,9 +70,10 @@ def main():
         p.add_argument("--run", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "doctor":
-        from .sandboxing import execution_info, prepare_font_cache
+        from .sandboxing import dotenv_warnings, execution_info, prepare_font_cache
 
         info = execution_info()
+        info["warnings"] = dotenv_warnings()
         if args.warm_font_cache:
             info.update(prepare_font_cache())
         print(json.dumps(info, indent=2))

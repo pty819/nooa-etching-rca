@@ -8,6 +8,7 @@ import {
   nextTick,
 } from "vue";
 import { api } from "./api";
+import { newRequestId } from "./requestId";
 import type {
   Evt,
   Session,
@@ -590,7 +591,7 @@ export function useResearch() {
     const value = s.draft.trim(),
       name = s.selected, agent=s.selectedAgent;
     if (request?.session !== name || request?.text !== value || request?.agent!==agent)
-      request = { session: name, agent, text: value, id: crypto.randomUUID() };
+      request = { session: name, agent, text: value, id: newRequestId() };
     s.pending = true;
     s.error = "";
     try {
