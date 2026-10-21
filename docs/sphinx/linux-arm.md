@@ -95,6 +95,7 @@ Runtime checks包含Linux x86_64、[原生Linux ARM64 runner](https://docs.githu
 - 不要把API密钥以文件形式挂进cell可读路径；cell环境变量已被清空，但同一容器内的文件对cell可读；
 - 可选NetworkPolicy仅放行模型网关等必要出口（seccomp已在cell内拒绝`socket`，NetworkPolicy是额外保障）。
 - 需要拒绝回退时设置`FACTOR_STRICT_BACKEND=1`。
+- cell需访问数据湖时设置`FACTOR_CELL_ALLOW_NETWORK=1`（默认关闭）：seccomp不再拒绝`socket`，并开放DNS/CA配置读取；landlock/bubblewrap/process三种后端均生效。务必配合下方NetworkPolicy限制出口。
 
 ```yaml
 securityContext:
@@ -110,4 +111,22 @@ env:
 volumeMounts:
   - {name: work, mountPath: /work}
 # volumes: [{name: work, emptyDir: {sizeLimit: 4Gi}}]
+```
+
+数据湖出口NetworkPolicy示例（仅放行数据湖网段端口与集群DNS；按实际CIDR/端口与标签修改，模型网关等其他出口需另行放行）：
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: nooa-egress}
+spec:
+  podSelector: {matchLabels: {app: nooa-etching-rca}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ipBlock: {cidr: 10.20.0.0/16}}]   # data lake
+      ports: [{protocol: TCP, port: 443}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
 ```

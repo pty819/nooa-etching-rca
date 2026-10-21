@@ -179,3 +179,42 @@ def test_process_backend_wall_clock_kills_process_group(tmp_path, monkeypatch):
     assert not result["ok"]
     time.sleep(5)
     assert not marker.exists()
+
+
+@linux
+@pytest.mark.parametrize("allow", [False, True])
+def test_network_toggle_controls_socket_creation(tmp_path, monkeypatch, allow):
+    monkeypatch.setenv("FACTOR_LINUX_BACKEND", "process")
+    if allow:
+        monkeypatch.setenv("FACTOR_CELL_ALLOW_NETWORK", "1")
+    else:
+        monkeypatch.delenv("FACTOR_CELL_ALLOW_NETWORK", raising=False)
+    code = (
+        "import socket\n"
+        "try:\n"
+        "    a, b = socket.socketpair()\n"
+        "    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "    s.bind(('127.0.0.1', 0)); s.listen(1)\n"
+        "    c = socket.create_connection(s.getsockname(), timeout=5)\n"
+        "    peer, _ = s.accept(); c.sendall(b'ping')\n"
+        "    print('NET_OK', peer.recv(4).decode())\n"
+        "except OSError as e:\n"
+        "    print('NET_DENIED', e.errno)\n"
+    )
+    result = _run(tmp_path, code)
+    assert result["ok"], result.get("output")
+    assert ("NET_OK ping" if allow else "NET_DENIED 1") in result["output"]
+
+
+def test_network_toggle_bubblewrap_shares_net(tmp_path, monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/bwrap")
+    monkeypatch.setattr(sandboxing, "runtime_reads", lambda: [Path("/usr")])
+    kit = tmp_path / "kit"
+    kit.mkdir()
+    (kit / "_mount_root.txt").write_text("nooa-private-mount-root-v1")
+    monkeypatch.delenv("FACTOR_CELL_ALLOW_NETWORK", raising=False)
+    assert "--share-net" not in sandboxing.bubblewrap_command([kit / "w.py"], [], [tmp_path])
+    monkeypatch.setenv("FACTOR_CELL_ALLOW_NETWORK", "1")
+    assert "--share-net" in sandboxing.bubblewrap_command([kit / "w.py"], [], [tmp_path])
+    assert sandboxing.child_environment(tmp_path)["FACTOR_CELL_ALLOW_NETWORK"] == "1"

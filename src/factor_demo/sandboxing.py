@@ -31,6 +31,8 @@ def runtime_reads() -> list[Path]:
             "/Library/Apple",
             "/Library/Fonts",
             "/private/var/db/timezone",
+            # Resolver/TLS config, only when cells may use the network.
+            *(_NETWORK_READS if allow_network() else []),
         ]
         if Path(p).exists()
     ]
@@ -48,6 +50,23 @@ def runtime_reads() -> list[Path]:
     for candidate in candidates:
         grant(candidate)
     return sorted(result)
+
+
+_NETWORK_READS = [
+    "/etc/resolv.conf",
+    "/etc/hosts",
+    "/etc/nsswitch.conf",
+    "/etc/gai.conf",
+    "/etc/services",
+    "/etc/ssl",
+    "/etc/pki",
+    "/etc/ca-certificates",
+]
+
+
+def allow_network() -> bool:
+    """Opt-in FACTOR_CELL_ALLOW_NETWORK=1: cells may open sockets (default off)."""
+    return _env_flag("FACTOR_CELL_ALLOW_NETWORK")
 
 
 def landlock_abi():
@@ -186,6 +205,7 @@ def bubblewrap_command(python_args, reads, writes):
         "--unshare-all",
         "--die-with-parent",
         "--new-session",
+        *(["--share-net"] if allow_network() else []),
         "--cap-drop",
         "ALL",
         "--tmpfs",
@@ -434,6 +454,7 @@ def child_environment(work: Path, **extra):
         "FACTOR_CELL_GID",
         "FACTOR_CELL_FSIZE_MB",
         "FACTOR_CELL_NOFILE",
+        "FACTOR_CELL_ALLOW_NETWORK",
     ):
         if key in os.environ:
             environment[key] = os.environ[key]
@@ -703,7 +724,7 @@ def install_linux(reads, writes):
             87,  # swapon
             168,  # swapoff
             169,  # reboot
-            51,  # acct
+            163,  # acct (51 is getsockname on x86_64)
             212,  # lookup_dcookie
             179,  # quotactl
             135,  # personality
@@ -761,6 +782,14 @@ def install_linux(reads, writes):
             92,  # personality
         ],
     }
+    if allow_network():
+        # Opt-in data-lake access: only socket creation is filtered (connect, send*,
+        # recv*, sockopt are never denied); keep the rest of the denylist intact.
+        networking = {"x86_64": {41, 53}, "aarch64": {198, 199}}
+        deny_eperm = {
+            key: [n for n in numbers if n not in networking[key]]
+            for key, numbers in deny_eperm.items()
+        }
     clone_nr = {"x86_64": 56, "aarch64": 220}
     clone3_nr = {"x86_64": 435, "aarch64": 435}
     # Namespace-related clone flags (NEWNS|NEWCGROUP|NEWUTS|NEWIPC|NEWUSER|NEWPID|NEWNET).
