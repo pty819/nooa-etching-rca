@@ -38,7 +38,7 @@ uv run --env-file .env factor-demo serve --host 127.0.0.1 --port 8765
 
 打开 <http://127.0.0.1:8765>，创建研究并选择custom provider。生成器拒绝覆盖已有数据。CLI及单分支恢复说明见[操作指南](docs/sphinx/operations.md)。
 
-ARM64与未启用Landlock的Linux部署见[Linux部署指南](docs/sphinx/linux-arm.md)，可用 `factor-demo doctor` 查看实际执行后端。
+ARM64与未启用Landlock的Linux部署见[Linux部署指南](docs/sphinx/linux-arm.md)，可用 `factor-demo doctor` 查看实际执行后端。内核<5.13且禁止嵌套命名空间的Kubernetes容器会自动回退到无特权的`process`后端（rlimit+尽力seccomp，文件系统隔离依赖容器），推荐的Pod配置见同一指南。
 
 ## 构建Sphinx文档
 
