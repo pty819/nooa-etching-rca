@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import os
 import shutil
 import tempfile
@@ -45,6 +46,8 @@ TOOLS = frozenset(
         "reply",
         "list_artifacts",
         "read_artifact",
+        "read_execution",
+        "list_executions",
         "create_formula_study",
         "begin_formula_comparison",
         "register_formula",
@@ -217,6 +220,13 @@ class ExternalCell:
         errors = asyncio.create_task(error_output())
         deadline = time.monotonic() + float(self.timeout)
         sequence = 0
+        observations = []
+
+        def observed(result):
+            if observations:
+                result.stdout += "\n[Host execution observations]\n" + "\n".join(observations)
+            return result
+
         try:
             while True:
                 remaining = deadline - time.monotonic()
@@ -241,6 +251,17 @@ class ExternalCell:
                         )
                     try:
                         value = await asyncio.wait_for(self.dispatch(message), tool_budget)
+                        if isinstance(value, dict) and "execution_ref" in value:
+                            observations.append(
+                                json.dumps(
+                                    {
+                                        k: value[k]
+                                        for k in ("execution_ref", "ok", "output", "dataset_ref")
+                                        if k in value
+                                    },
+                                    ensure_ascii=False,
+                                )
+                            )
                         reply = {
                             "cell": token,
                             "sequence": sequence,
@@ -284,24 +305,26 @@ class ExternalCell:
                     wrapper_line_offset=int(message.get("wrapper_line_offset", 0)),
                 )
                 if message.get("error"):
-                    result.error = RuntimeError(str(message["error"])[:4000])
+                    result.error = RuntimeError(str(message["error"])[-16000:])
                 if "signal" in message:
                     result.signal = _ReturnResultSignal(
                         result=decode(message["signal"], self.registry)
                     )
                 elif "returned_value" in message:
                     result.returned_value = decode(message["returned_value"], self.registry)
-                return result
+                return observed(result)
         except asyncio.CancelledError:
             self.checkpoint = None
             raise
         except TimeoutError as error:
             self.checkpoint = None
-            return ExecutionResult(stdout="", error=RuntimeError(str(error)[:4000]))
+            return observed(ExecutionResult(stdout="", error=RuntimeError(str(error)[:4000])))
         except Exception as error:  # noqa: BLE001 - untrusted execution/service boundary
             self.checkpoint = None
-            return ExecutionResult(
-                stdout="", error=RuntimeError("External cell failed: " + str(error)[:4000])
+            return observed(
+                ExecutionResult(
+                    stdout="", error=RuntimeError("External cell failed: " + str(error)[:4000])
+                )
             )
         finally:
             await reap(process)

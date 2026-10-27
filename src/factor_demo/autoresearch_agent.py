@@ -404,6 +404,18 @@ class AutoresearchAgent(Agent):
             return await self._reply_writer.send(message_id, brief, image_paths, table_paths)
         return self._replies.send(message_id, brief, image_paths, table_paths)
 
+    async def list_executions(self, offset: int = 0, limit: int = 20) -> list[dict]:
+        """List recorded executions, newest first; namespaces reset on a new research turn."""
+        return self._workspace.list_executions(offset, limit)
+
+    async def read_execution(self, execution_ref: str, offset: int = 0, limit: int = 12000) -> dict:
+        """Read immutable executed source, stdout/stderr and status without running Python.
+
+        Each text field is independently paged by character offset/limit. Collected
+        output may be truncated; original code and retained diagnostics remain available.
+        """
+        return self._workspace.read_execution(execution_ref, offset, limit)
+
     async def list_artifacts(self, prefix: str = "artifacts") -> list[dict]:
         """List actual artifact paths, types and sizes before referencing a file."""
         return artifact_index(self._workspace.run, prefix)

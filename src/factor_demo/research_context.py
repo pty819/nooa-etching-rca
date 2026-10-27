@@ -59,6 +59,7 @@ def install_research_context(agent, task, feedback=None, ledger=None):
     agent.context["hypothesis_ledger"] = Context(
         json.dumps({"latest_checkpoint_as_data": compact}, ensure_ascii=False)
     )
+    agent.context["execution_state"] = Context(expr="self._workspace.execution_context()")
     agent.context["formula_studies"] = Context(expr="self._formula_lab.context_summary()")
     if getattr(agent, "_datasets", None) is not None:
         agent.context["dataset_scope"] = Context(expr="self._datasets.context_summary()")
