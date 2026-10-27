@@ -117,6 +117,8 @@ class PythonWorkspace:
 
             self.dataset_session = DatasetSession(self.run, events)
         self.checkpoint = None
+        self.latest_execution = None
+        self.latest_failure = None
         self.pumps = []
         self.external_chars = 0
         self.output_events = 0
@@ -151,8 +153,11 @@ class PythonWorkspace:
             kept = text[: max(0, 262144 - counter[1])]
             counter[0] += len(text)
             counter[1] += len(kept)
-            if kept:
+            if source == "stderr":
+                chunks[:] = [("".join(chunks) + text)[-262144:]]
+            elif kept:
                 chunks.append(kept)
+            if kept:
                 self.emit("tool.output", cell=cell, text=kept, source=source)
 
     async def execute(
@@ -270,7 +275,8 @@ class PythonWorkspace:
                 await asyncio.gather(*self.pumps, return_exceptions=True)
                 self.process = None
                 self.pumps = []
-            output = "".join(stdout + stderr)
+            stdout_text, stderr_text = "".join(stdout), "".join(stderr)
+            output = stdout_text + stderr_text
             truncated = any(c[0] > c[1] for c in counters)
             if timed_out or interrupted:
                 self.checkpoint = None
@@ -285,7 +291,7 @@ class PythonWorkspace:
                 self.checkpoint = None
             if truncated:
                 marker = "\n[Output truncated; save large results to artifacts.]"
-                output = output[: 262144 - len(marker)] + marker
+                output = self.preview(output, 262000) + marker
             variables = {}
             if metadata.is_file() and not metadata.is_symlink() and metadata.stat().st_size < 32000:
                 try:
@@ -297,6 +303,8 @@ class PythonWorkspace:
                 "ok": process.returncode == 0 and not timed_out and not interrupted,
                 "returncode": process.returncode,
                 "output": output,
+                "stdout": stdout_text,
+                "stderr": stderr_text,
                 "output_truncated": truncated,
                 "output_characters": sum(c[0] for c in counters),
                 "variables": variables,
@@ -315,6 +323,15 @@ class PythonWorkspace:
             output = record["output"]
             result["output"] = output
             record["execution_ref"] = proof
+            write_json(private / "result.json", record)
+            self.latest_execution = {
+                "execution_ref": proof,
+                "ok": result["ok"],
+                "code": self.preview(source.read_text()),
+                "output": self.preview(output),
+            }
+            if not result["ok"]:
+                self.latest_failure = self.latest_execution
             with (self.run / "execution.jsonl").open("a") as out:
                 out.write(json.dumps(record, ensure_ascii=False) + "\n")
             cells = ensure_real_dir(self.work / "research_cells", root=self.work)
@@ -336,10 +353,67 @@ class PythonWorkspace:
                 "cell": cell,
                 "execution_ref": proof,
                 "dataset_ref": self.dataset_id,
-                "output": output[:24000],
+                "output": self.preview(output),
                 "full_output": str(filename.with_suffix(".output.json").relative_to(self.work)),
                 "output_truncated": truncated or len(output) > 24000,
             }
+
+    def execution_context(self):
+        return {
+            "namespace": "current research turn only; new turn starts empty",
+            "checkpoint_available": self.checkpoint is not None,
+            "latest_execution": self.latest_execution,
+            "latest_failure": self.latest_failure,
+        }
+
+    @staticmethod
+    def preview(text, limit=24000):
+        if len(text) <= limit:
+            return text
+        return (
+            text[: limit // 2] + "\n[... truncated; use read_execution ...]\n" + text[-limit // 2 :]
+        )
+
+    def list_executions(self, offset=0, limit=20):
+        import sqlite3
+
+        path = self.run / ".execution/ledger.sqlite"
+        if not path.exists():
+            return []
+        with sqlite3.connect(path) as db:
+            rows = db.execute(
+                "SELECT id,doc FROM cells ORDER BY rowid DESC LIMIT ? OFFSET ?",
+                (min(100, max(1, limit)), max(0, offset)),
+            ).fetchall()
+        return [{"execution_ref": key, **json.loads(doc)} for key, doc in rows]
+
+    def read_execution(self, execution_ref, offset=0, limit=12000):
+        import re
+
+        if not re.fullmatch(r"cell-[0-9]{6,}", execution_ref):
+            raise ValueError("Invalid execution_ref")
+        private = self.run / ".execution" / execution_ref.replace("-", "_")
+        record = json.loads((private / "result.json").read_text())
+        offset, limit = max(0, offset), min(32000, max(1, limit))
+        fields = {
+            "code": (private / "source.py").read_text(),
+            **{k: record[k] for k in ("output", "stdout", "stderr")},
+        }
+        return {
+            "execution_ref": execution_ref,
+            "ok": record["ok"],
+            "dataset_ref": record["dataset_ref"],
+            "offset": offset,
+            "output_truncated": record["output_truncated"],
+            "fields": {
+                k: {
+                    "text": v[offset : offset + limit],
+                    "characters": len(v),
+                    "next_offset": offset + limit if len(v) > offset + limit else None,
+                }
+                for k, v in fields.items()
+            },
+        }
 
     async def close(self):
         from .sandboxing import reap

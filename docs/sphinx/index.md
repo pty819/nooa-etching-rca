@@ -54,6 +54,7 @@ simulation
 :caption: Agent与研究方法
 
 agents
+execution-feedback
 algorithms
 formula-research
 feature-isolation

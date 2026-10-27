@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -92,7 +93,9 @@ async def main():
         "cell": config["cell"],
         "stdout": result.stdout[:32000],
         "stderr": result.stderr[:16000],
-        "error": str(result.error)[:4000] if result.error else None,
+        "error": "".join(traceback.format_exception(result.error))[-16000:]
+        if result.error
+        else None,
         "wrapper_line_offset": result.wrapper_line_offset,
     }
     if result.signal is not None:
