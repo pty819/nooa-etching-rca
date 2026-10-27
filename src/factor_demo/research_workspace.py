@@ -167,6 +167,7 @@ class PythonWorkspace:
         *,
         script: Path | None = None,
         args: list[str] | None = None,
+        source_ref: str | None = None,
     ) -> dict:
         if not self.research_enabled:
             raise PermissionError("Research code execution is disabled in discussion mode")
@@ -199,12 +200,15 @@ class PythonWorkspace:
 
             cells = ensure_real_dir(self.work / "research_cells", root=self.work)
             filename = cells / f"cell_{cell:04d}.py"
-            write_text_nofollow(filename, code, root=self.work)
+            if source_ref is None:
+                write_text_nofollow(filename, code, root=self.work)
             # The child's source/config are immutable to that child, even on Linux.
             private = self.run / ".execution" / f"cell_{cell:06d}"
             private.mkdir(parents=True, exist_ok=False)
             source = private / "source.py"
-            source.write_text(script.read_text() if script else code)
+            executed_source = script.read_text() if script else code
+            if source_ref is None:
+                source.write_text(executed_source)
             states = ensure_real_dir(self.work / ".cell-state", root=self.work)
             checkpoint = states / f"{cell:06d}.pickle"
             metadata = states / f"{cell:06d}.json"
@@ -213,7 +217,9 @@ class PythonWorkspace:
                 config,
                 {
                     "source": str(source),
-                    "filename": str(script) if script else str(filename.relative_to(self.work)),
+                    **({"code": code} if source_ref else {}),
+                    "filename": source_ref
+                    or (str(script) if script else str(filename.relative_to(self.work))),
                     "script": bool(script),
                     "args": args or [],
                     "previous": str(self.checkpoint) if self.checkpoint else None,
@@ -302,6 +308,7 @@ class PythonWorkspace:
             result = {
                 "ok": process.returncode == 0 and not timed_out and not interrupted,
                 "returncode": process.returncode,
+                "source_ref": source_ref,
                 "output": output,
                 "stdout": stdout_text,
                 "stderr": stderr_text,
@@ -318,7 +325,14 @@ class PythonWorkspace:
                 "dataset_ref": self.dataset_id,
                 **result,
             }
-            proof = record_cell(self.run, record, source, self.data_root, before)
+            proof = record_cell(
+                self.run,
+                record,
+                source,
+                self.data_root,
+                before,
+                source_text=code if source_ref else None,
+            )
             result["ok"] = record["ok"]
             output = record["output"]
             result["output"] = output
@@ -327,7 +341,7 @@ class PythonWorkspace:
             self.latest_execution = {
                 "execution_ref": proof,
                 "ok": result["ok"],
-                "code": self.preview(source.read_text()),
+                "code": self.preview(executed_source),
                 "output": self.preview(output),
             }
             if not result["ok"]:
@@ -396,13 +410,16 @@ class PythonWorkspace:
         record = json.loads((private / "result.json").read_text())
         offset, limit = max(0, offset), min(32000, max(1, limit))
         fields = {
-            "code": (private / "source.py").read_text(),
+            "code": record["code"]
+            if record.get("source_ref")
+            else (private / "source.py").read_text(),
             **{k: record[k] for k in ("output", "stdout", "stderr")},
         }
         return {
             "execution_ref": execution_ref,
             "ok": record["ok"],
             "dataset_ref": record["dataset_ref"],
+            "source_ref": record.get("source_ref"),
             "offset": offset,
             "output_truncated": record["output_truncated"],
             "fields": {

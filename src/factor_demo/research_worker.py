@@ -1,6 +1,7 @@
 """One untrusted scientific cell. No host protocol or credential-bearing objects."""
 
 import json
+import linecache
 import os
 import sys
 import traceback
@@ -22,6 +23,12 @@ def main():
     if previous and previous.is_file():
         with previous.open("rb") as stream:
             namespace.update(cloudpickle.load(stream))
+    sources = namespace.pop("__source_cache__", {})
+    sources[config["filename"]] = (
+        config["code"] if "code" in config else Path(config["source"]).read_text()
+    )
+    for filename, text in sources.items():
+        linecache.cache[filename] = (len(text), None, text.splitlines(keepends=True), filename)
     namespace.update(
         DATASET=Path(os.environ["RESEARCH_DATASET"]),
         DATASET_ID=os.environ.get("RESEARCH_DATASET_ID", ""),
@@ -39,7 +46,7 @@ def main():
                 "DATASET": namespace["DATASET"],
                 "DATASET_ID": namespace["DATASET_ID"],
             }
-        exec(compile(Path(config["source"]).read_text(), config["filename"], "exec"), executing)  # noqa: S102 - guarded child only
+        exec(compile(sources[config["filename"]], config["filename"], "exec"), executing)  # noqa: S102 - guarded child only
     except SystemExit as error:
         result = error.code if isinstance(error.code, int) else 1 if error.code else 0
         if error.code is not None and not isinstance(error.code, int):
@@ -59,7 +66,7 @@ def main():
         except Exception:  # noqa: BLE001 - checkpoint skips nonserializable locals
             dropped.append(name)
     with Path(config["checkpoint"]).open("wb") as stream:
-        cloudpickle.dump(state, stream)
+        cloudpickle.dump({**state, "__source_cache__": sources}, stream)
     Path(config["metadata"]).write_text(
         json.dumps(
             {

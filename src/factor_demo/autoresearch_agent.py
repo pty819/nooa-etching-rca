@@ -46,7 +46,7 @@ class AutoresearchAgent(Agent):
     可自由组合NumPy、SciPy、scikit-learn、aeon、statsmodels、pandas、matplotlib及其他已安装库。
     根据问题选择成熟实现，不因强调Polars就手写替代成熟统计/时序算法。不得访问隐藏真值。
     外层python_cell的cwd/文件系统不属于研究工作目录，不在外层open/read_parquet/savefig。
-    把完整源代码交给run_code或write_file+run_script；worker的cwd就是workspace；当前只读数据在worker变量DATASET，引用为DATASET_ID。
+    把完整源代码交给run_code或code_write/code_edit+code_run（无.py文件的版本化缓冲区）或write_file+run_script；worker的cwd就是workspace；当前只读数据在worker变量DATASET，引用为DATASET_ID。
     PNG等二进制由run_code中的plt.savefig('artifacts/plot.png')直接生成；write_file只接受文本。
     重要数值保存为CSV/Parquet并返回EvidenceRef（id/claim/artifact/column/where/statistic/value/unit/run_ids）。
     value表示where筛出的单行单元格；聚合用mean/count等明确操作。Hypothesis.evidence_ids引用这些ID；
@@ -337,6 +337,76 @@ class AutoresearchAgent(Agent):
         """
         await self._writable()
         return await self._formula_lab.freeze(study_id)
+
+    async def code_write(self, name: str, source: str, expected_revision: int = 0) -> dict:
+        """Create/replace a named code buffer without executing or creating a .py file.
+
+        Creation requires expected_revision=0; replacement requires the current
+        revision from code_read. Revisions persist in the supervisor database.
+        Edits never change already-running definitions: explicitly code_run next.
+        """
+        await self._writable()
+        if not self._workspace.research_enabled:
+            raise PermissionError("Discussion mode cannot modify code buffers")
+        from .code_buffers import CodeBuffers
+
+        return CodeBuffers(self._workspace.run).write(name, source, expected_revision)
+
+    async def code_edit(self, name: str, expected_revision: int, old: str, new: str) -> dict:
+        """Replace one exact nonempty match atomically in a named buffer.
+
+        Stale revision or absent/ambiguous text fails without modifying history.
+        Editing does not execute code or update existing Python function objects.
+        """
+        await self._writable()
+        if not self._workspace.research_enabled:
+            raise PermissionError("Discussion mode cannot modify code buffers")
+        from .code_buffers import CodeBuffers
+
+        return CodeBuffers(self._workspace.run).write(name, "", expected_revision, old=old, new=new)
+
+    async def code_read(
+        self, name: str, revision: int = 0, offset: int = 0, limit: int = 12000
+    ) -> dict:
+        """Read exact source text by character page; revision=0 selects latest.
+
+        Returns source_ref/hash and next_offset, including for very long lines.
+        Use the returned explicit revision for code_edit and code_run.
+        """
+        from .code_buffers import CodeBuffers
+
+        doc = CodeBuffers(self._workspace.run).get(name, revision)
+        text = doc.pop("source")
+        offset, limit = max(0, offset), min(32000, max(1, limit))
+        return {
+            **doc,
+            "content": text[offset : offset + limit],
+            "characters": len(text),
+            "offset": offset,
+            "start_line": text[:offset].count("\n") + 1,
+            "next_offset": offset + limit if len(text) > offset + limit else None,
+        }
+
+    async def code_list(self) -> list[dict]:
+        """List durable named code buffers and latest revisions."""
+        from .code_buffers import CodeBuffers
+
+        return CodeBuffers(self._workspace.run).catalog()
+
+    async def code_run(self, name: str, revision: int, timeout_s: int = 120) -> dict:
+        """Execute exactly one immutable buffer revision in the scientific namespace.
+
+        revision must be positive. No automatic replay: existing old references
+        stay old, deleted names remain until explicitly removed or namespace reset.
+        Execution history identifies the exact source revision via source_ref.
+        """
+        await self._writable()
+        if revision < 1:
+            raise ValueError("Choose an explicit positive revision")
+        from .code_buffers import CodeBuffers
+
+        doc = CodeBuffers(self._workspace.run).get(name, revision)
+        return await self._workspace.execute(doc["source"], timeout_s, source_ref=doc["source_ref"])
 
     async def write_file(self, path: str, content: str) -> dict:
         """Save ANY text/source file within the research workspace, without running it.

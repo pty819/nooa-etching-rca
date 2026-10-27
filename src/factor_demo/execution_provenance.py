@@ -1,5 +1,6 @@
 """Host-owned, bounded execution/artifact ledger; never trust child-written receipts."""
 
+import hashlib
 import json
 import shutil
 import sqlite3
@@ -37,7 +38,7 @@ def artifact_hashes(run):
     }
 
 
-def record_cell(run: Path, record, source: Path, data_root: Path, before=None):
+def record_cell(run: Path, record, source: Path, data_root: Path, before=None, *, source_text=None):
     base = run / ".execution"
     base.mkdir(exist_ok=True)
     identity = f"cell-{record['cell']:06d}"
@@ -56,7 +57,13 @@ def record_cell(run: Path, record, source: Path, data_root: Path, before=None):
     payload = {
         k: record[k] for k in ["cell", "dataset_ref", "ok", "returncode", "started", "elapsed_s"]
     }
-    payload.update(source_sha256=file_hash(source), input_files=files, artifacts=artifacts)
+    payload.update(
+        source_sha256=hashlib.sha256(source_text.encode()).hexdigest()
+        if source_text is not None
+        else file_hash(source),
+        input_files=files,
+        artifacts=artifacts,
+    )
     with sqlite3.connect(base / "ledger.sqlite") as db:
         db.execute("CREATE TABLE IF NOT EXISTS cells(id TEXT PRIMARY KEY, doc TEXT NOT NULL)")
         db.execute("INSERT INTO cells VALUES(?,?)", (identity, json.dumps(payload)))
