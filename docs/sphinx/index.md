@@ -55,6 +55,7 @@ simulation
 
 agents
 execution-feedback
+code-buffers
 algorithms
 formula-research
 feature-isolation
