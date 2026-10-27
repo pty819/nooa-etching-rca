@@ -492,7 +492,11 @@ def _allow_landlock_without_pidns() -> bool:
 
 
 def cell_nproc_limit() -> int:
-    """Max processes per cell (RLIMIT_NPROC / cgroup pids.max). Default 512."""
+    """Max processes per cell (RLIMIT_NPROC / cgroup pids.max). Default 512.
+
+    On darwin this is opt-in only: XNU checks RLIMIT_NPROC against the uid's
+    whole-system process count, so see _apply_nproc_rlimit before relying on it.
+    """
     raw = os.environ.get("FACTOR_CELL_NPROC", "512").strip()
     try:
         value = int(raw)
@@ -504,8 +508,19 @@ def cell_nproc_limit() -> int:
 
 
 def _apply_nproc_rlimit() -> None:
+    """Cap cell process spawning where RLIMIT_NPROC can isolate the cell.
+
+    RLIMIT_NPROC counts processes for the real uid; cgroup pids.max provides
+    a separate tree-wide cap on Linux. Darwin has no namespaces: XNU compares
+    the uid's whole-system process count against the limit on every fork, so a
+    busy login session above the limit turns each cell fork into EAGAIN. Skip
+    on darwin unless the operator sets FACTOR_CELL_NPROC explicitly; runaway
+    children remain bounded there by cell_reaper and kern.maxprocperuid.
+    """
     import resource
 
+    if sys.platform == "darwin" and "FACTOR_CELL_NPROC" not in os.environ:
+        return
     limit = cell_nproc_limit()
     try:
         _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
