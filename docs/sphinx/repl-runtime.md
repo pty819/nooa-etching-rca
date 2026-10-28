@@ -21,3 +21,32 @@ Scientific stdout/stderr are per-cell files streamed by the host, separate from 
 macOS RLIMIT_NPROC is opt-in because it counts the entire login uid; explicit limits remain honored. This carries forward the necessary process-cap fix also proposed in PR #8, without its dependency upgrade.
 
 On Linux, successful cell completion includes a host-side /proc sweep that stops and kills subprocess descendants (including setsid/fork chains), preserving only the pre-source kernel bootstrap chain. Cleanup failure invalidates the kernel. Python objects remain live; background subprocesses do not survive cell boundaries.
+
+## Phase B experiment contract
+
+`code_write`/`code_edit` remain compare-and-swap source edits and never execute.
+`code_run` still deliberately executes in the live namespace. For candidate work,
+use `code_experiment(name, revision, checks, dependencies, parameters)` with positive
+exact revisions, ordered dependency buffers and JSON parameters. A fresh guarded
+worker receives a byte-hashed copy of the selected DATASET, no main-kernel objects
+or workspace files. Dependencies, candidate and explicit assertion checks share
+only that disposable worker; a total wall deadline covers all steps. Every worker
+is closed before returning, including cancellation. Failed output stays in the
+private experiment tree, never the main artifact directory.
+
+The host saves exact source, hashes, input files, parameters, checks and execution
+observations. `checked` means the supplied Python checks completed successfully;
+it is not independent mathematical or goal verification. The Python worker is
+untrusted, as in Phase A. `code_read_experiment` returns retained diagnostics.
+`code_publish` explicitly copies the checked artifact set through the supervisor
+to a new immutable `artifacts/experiment-<id>/` directory. It refuses source/data
+changes and staged artifact tampering. Publishing does not activate functions in
+the main kernel. Source revision or input changes make history `stale`, and the
+host evidence verifier refuses stale published experiments. Old files remain for
+audit; they do not become evidence for the new code. This is conservative whole
+input/source invalidation, not an automatic object dependency graph.
+
+Regression gate: runtime/check/timeout failures preserve main PID, object identity
+and artifact bytes; two candidate revisions retain separate traces; source edits
+and dataset-byte changes invalidate results and publication; staged/published
+symlink/tampering is refused; declared tools work through the actual CodeAct proxy.
