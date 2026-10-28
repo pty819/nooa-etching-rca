@@ -85,11 +85,7 @@ def prepare_workspace(data: Path, run: Path) -> dict:
 
 
 class PythonWorkspace:
-    """Trusted supervisor; each cell executes in a fresh credential-free child.
-
-    State is deserialized only inside the next guarded child. The host never
-    unpickles worker data and never accepts a worker-supplied success frame.
-    """
+    """Supervisor for a guarded live kernel. Runtime failure invalidates its epoch."""
 
     def __init__(self, run: Path, events=None, research_enabled=True, read_scope_root=None):
         self.run = run.resolve()
@@ -116,7 +112,8 @@ class PythonWorkspace:
             from .datasets import DatasetSession
 
             self.dataset_session = DatasetSession(self.run, events)
-        self.checkpoint = None
+        self.checkpoint = None  # Compatibility: no serialized namespace is restored.
+        self.kernel = None
         self.latest_execution = None
         self.latest_failure = None
         self.pumps = []
@@ -141,7 +138,7 @@ class PythonWorkspace:
         from .sandboxing import prepare_guard_modules
 
         prepare_guard_modules(self.kit)
-        for name in ["research_worker.py", "sandboxing.py"]:
+        for name in ["research_worker.py", "sandboxing.py", "session_cell.py"]:
             shutil.copyfile(Path(__file__).with_name(name), self.kit / name)
 
     async def _capture(self, reader, chunks, counter, cell, source):
@@ -174,10 +171,7 @@ class PythonWorkspace:
         from .execution_provenance import artifact_hashes, next_cell, record_cell
         from .sandboxing import (
             apply_cell_cgroup_pids,
-            child_environment,
             ensure_child_subreaper,
-            launch,
-            reap,
         )
 
         ensure_child_subreaper()
@@ -186,6 +180,9 @@ class PythonWorkspace:
             if self.dataset_session is not None:
                 current = self.dataset_session.current()
                 if self.dataset_id != current["id"]:
+                    if self.kernel:
+                        await self.kernel.close()
+                        self.kernel = None
                     self.checkpoint = None
                     self.dataset_id = current["id"]
                     self.data_root = self.dataset_session.path(self.dataset_id)
@@ -209,30 +206,14 @@ class PythonWorkspace:
             executed_source = script.read_text() if script else code
             if source_ref is None:
                 source.write_text(executed_source)
-            states = ensure_real_dir(self.work / ".cell-state", root=self.work)
-            checkpoint = states / f"{cell:06d}.pickle"
-            metadata = states / f"{cell:06d}.json"
             config = private / "request.json"
             write_json(
                 config,
                 {
-                    "source": str(source),
+                    "source_ref": source_ref,
+                    "filename": source_ref or str(filename.relative_to(self.work)),
                     **({"code": code} if source_ref else {}),
-                    "filename": source_ref
-                    or (str(script) if script else str(filename.relative_to(self.work))),
-                    "script": bool(script),
-                    "args": args or [],
-                    "previous": str(self.checkpoint) if self.checkpoint else None,
-                    "checkpoint": str(checkpoint),
-                    "metadata": str(metadata),
-                    "work": str(self.work),
-                    "reads": [str(self.data_root), str(self.kit), str(private)],
                 },
-            )
-            environment = child_environment(
-                self.work,
-                RESEARCH_DATASET=str(self.data_root),
-                RESEARCH_DATASET_ID=self.dataset_id or "",
             )
             started = time.time()
             self.emit(
@@ -242,80 +223,36 @@ class PythonWorkspace:
                 timeout_s=min(300, max(1, timeout_s)),
                 dataset_ref=self.dataset_id,
             )
-            stdout, stderr, counters = [], [], [[0, 0], [0, 0]]
-            interrupted = None
-            timed_out = False
+            from .persistent_kernel import PersistentKernel
+
             apply_cell_cgroup_pids()
-            self.process = await asyncio.create_subprocess_exec(
-                *launch(
-                    [self.kit / "research_worker.py", config],
-                    [self.data_root, self.kit, private],
-                    [self.work],
-                ),
-                cwd=self.work,
-                env=environment,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                start_new_session=True,
-            )
-            process = self.process
-            self.pumps = [
-                asyncio.create_task(
-                    self._capture(process.stdout, stdout, counters[0], cell, "stdout")
-                ),
-                asyncio.create_task(
-                    self._capture(process.stderr, stderr, counters[1], cell, "stderr")
-                ),
-            ]
-            try:
-                async with asyncio.timeout(min(300, max(1, timeout_s))):
-                    await process.wait()
-                    await asyncio.gather(*self.pumps)
-            except TimeoutError:
-                timed_out = True
-            except asyncio.CancelledError as error:
-                interrupted = error
-            finally:
-                await reap(process)
-                await asyncio.gather(*self.pumps, return_exceptions=True)
-                self.process = None
-                self.pumps = []
-            stdout_text, stderr_text = "".join(stdout), "".join(stderr)
-            output = stdout_text + stderr_text
-            truncated = any(c[0] > c[1] for c in counters)
-            if timed_out or interrupted:
-                self.checkpoint = None
-                output += (
-                    "\nHard timeout: child killed; variables reset, files retained"
-                    if timed_out
-                    else "\nCancelled: child stopped; files retained"
+            if self.kernel is None:
+                self.kernel = PersistentKernel(
+                    self.work, self.kit, self.data_root, self.dataset_id, self.emit
                 )
-            elif checkpoint.is_file() and not checkpoint.is_symlink():
-                self.checkpoint = checkpoint
-            else:
-                self.checkpoint = None
-            if truncated:
-                marker = "\n[Output truncated; save large results to artifacts.]"
-                output = self.preview(output, 262000) + marker
-            variables = {}
-            if metadata.is_file() and not metadata.is_symlink() and metadata.stat().st_size < 32000:
-                try:
-                    raw = json.loads(metadata.read_text()).get("variables", {})
-                    variables = {str(k)[:200]: str(v)[:200] for k, v in list(raw.items())[:100]}
-                except (ValueError, AttributeError, OSError):
-                    pass
-            result = {
-                "ok": process.returncode == 0 and not timed_out and not interrupted,
-                "returncode": process.returncode,
-                "source_ref": source_ref,
-                "output": output,
-                "stdout": stdout_text,
-                "stderr": stderr_text,
-                "output_truncated": truncated,
-                "output_characters": sum(c[0] for c in counters),
-                "variables": variables,
-            }
+            kernel = self.kernel
+            if script:
+                kernel = PersistentKernel(
+                    self.work, self.kit, self.data_root, self.dataset_id, self.emit
+                )
+            try:
+                result = await kernel.run(
+                    executed_source,
+                    source_ref or (str(script) if script else str(filename.relative_to(self.work))),
+                    cell,
+                    min(300, max(0.1, timeout_s)),
+                    script=bool(script),
+                    args=args,
+                )
+            finally:
+                if script:
+                    await kernel.close()
+            interrupted = result.pop("interrupted")
+            output, truncated = result["output"], result["output_truncated"]
+            if result["state_effect"] == "reset":
+                output += f"\nKernel {result['runtime_status']}: variables reset, files retained; reload explicit inputs."
+                result["output"] = output
+            result["source_ref"] = source_ref
             record = {
                 "cell": cell,
                 "code": code,
@@ -375,7 +312,10 @@ class PythonWorkspace:
     def execution_context(self):
         return {
             "namespace": "current research turn only; new turn starts empty",
-            "checkpoint_available": self.checkpoint is not None,
+            "checkpoint_available": False,
+            "kernel_id": self.kernel.kernel_id if self.kernel else None,
+            "epoch": self.kernel.epoch if self.kernel else 0,
+            "live": bool(self.kernel and self.kernel.process),
             "latest_execution": self.latest_execution,
             "latest_failure": self.latest_failure,
         }
@@ -433,8 +373,7 @@ class PythonWorkspace:
         }
 
     async def close(self):
-        from .sandboxing import reap
-
-        await reap(self.process)
+        if self.kernel:
+            await self.kernel.close()
         self.process = None
         self.checkpoint = None

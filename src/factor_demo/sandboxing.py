@@ -506,6 +506,10 @@ def cell_nproc_limit() -> int:
 def _apply_nproc_rlimit() -> None:
     import resource
 
+    # XNU counts all processes of this login uid; a default cap can break every
+    # scientific subprocess on a busy desktop. Explicit operator limits remain.
+    if sys.platform == "darwin" and "FACTOR_CELL_NPROC" not in os.environ:
+        return
     limit = cell_nproc_limit()
     try:
         _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)

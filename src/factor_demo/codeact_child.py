@@ -23,25 +23,26 @@ def models():
 
 
 async def main():
+    import contextlib
+    import io
+
     config = json.loads(sys.stdin.buffer.readline())
     from sandboxing import install_linux
 
     install_linux(config["reads"], [config["work"]])
-    import cloudpickle
+    import typing
+    from types import SimpleNamespace
+
     from cell_proxy import AgentProxy, safe_doc
     from cell_wire import decode, dumps, encode
-    from nooa.events import _NO_RETURN
-    from nooa.runtime.sandbox.cell_core import run_cell_source
+    from nooa.agentdoc import pformat, pprint
     from nooa.strategies.codeact import _ReturnResultSignal
+    from session_cell import CellCompileError, execute_source
 
     registry = models()
     proxy = AgentProxy(config, registry)
     output = sys.stdout.buffer
-    namespace = {}
-    previous = Path(config["previous"]) if config.get("previous") else None
-    if previous and previous.is_file():
-        with previous.open("rb") as stream:
-            namespace.update(cloudpickle.load(stream))
+    namespace = {**registry, **decode(config["bindings"], registry)}
 
     def complete(*args, **kwargs):
         if args:
@@ -50,66 +51,58 @@ async def main():
             raise _ReturnResultSignal(result={"result": args[0]})
         raise _ReturnResultSignal(result=kwargs)
 
-    namespace.update(registry)
-    namespace.update(decode(config["bindings"], registry))
     namespace.update(
-        self=proxy, doc=safe_doc, return_result=complete, asyncio=asyncio, __name__="__cell__"
+        self=proxy,
+        doc=safe_doc,
+        return_result=complete,
+        asyncio=asyncio,
+        __name__="__cell__",
+        pprint=pprint,
+        pformat=pformat,
+        typing=typing,
     )
-    import typing
-
-    from nooa.agentdoc import pformat, pprint
-
-    namespace.update(pprint=pprint, pformat=pformat, typing=typing)
-    from types import SimpleNamespace
-
     namespace["_call"] = SimpleNamespace(
         return_type=registry.get(config["return_type"], dict), method_name=config["method"]
     )
     namespace["python_cell_state"] = lambda: {
         "locals": {k: type(v).__name__ for k, v in namespace.items() if not k.startswith("_")}
     }
-    result = await run_cell_source(
-        config["code"], namespace, execution_count=config["execution_count"]
-    )
-    excluded = (
-        set(registry)
-        | {"self", "doc", "return_result", "asyncio", "__builtins__"}
-        | set(config["bindings"])
-    )
-    state = {}
-    for name, value in namespace.items():
-        if name.startswith("_") or name in excluded:
-            continue
-        try:
-            cloudpickle.dumps(value)
-        except Exception as error:  # noqa: BLE001 - nonserializable locals are not checkpointed
-            print(f"Checkpoint omitted {name}: {type(error).__name__}", file=sys.stderr)
-            continue
-        state[name] = value
-    with Path(config["checkpoint"]).open("wb") as stream:  # noqa: ASYNC230 - one isolated cell process
-        cloudpickle.dump(state, stream)
-    message = {
-        "kind": "result",
-        "cell": config["cell"],
-        "stdout": result.stdout[:32000],
-        "stderr": result.stderr[:16000],
-        "error": "".join(traceback.format_exception(result.error))[-16000:]
-        if result.error
-        else None,
-        "wrapper_line_offset": result.wrapper_line_offset,
-    }
-    if result.signal is not None:
-        message["signal"] = encode(result.signal.result)
-    elif result.returned_value is not _NO_RETURN:
-        try:
-            message["returned_value"] = encode(result.returned_value)
-        except ValueError:
-            pass
-    output.write(dumps(message))
-    output.flush()
-    # Checkpoint and JSON result are fully flushed. The fresh child owns no
-    # model transport; SDK atexit hooks must not turn a committed cell into a
-    # timeout or trigger the same approved tools again. The host reaps its group.
+    while True:
+        proxy.cell, proxy.sequence = config["cell"], 0
+        proxy.docs, proxy.tools = config["docs"], config["tools"]
+        stdout, stderr = io.StringIO(), io.StringIO()
+        message = {
+            "kind": "result",
+            "cell": config["cell"],
+            "wrapper_line_offset": 0,
+            "error": None,
+            "status": "completed",
+        }
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            try:
+                value = await execute_source(
+                    config["code"], namespace, f"Cell In[{config['execution_count']}]"
+                )
+                try:
+                    message["returned_value"] = encode(value)
+                except ValueError:
+                    pass
+            except _ReturnResultSignal as signal:
+                message["signal"] = encode(signal.result)
+            except BaseException as error:  # noqa: BLE001 - isolated execution boundary
+                message["error"] = "".join(traceback.format_exception(error))[-16000:]
+                message["status"] = (
+                    "syntax_error" if isinstance(error, CellCompileError) else "exception"
+                )
+        message.update(stdout=stdout.getvalue()[:32000], stderr=stderr.getvalue()[-16000:])
+        output.write(dumps(message))
+        output.flush()
+        if message["status"] == "exception" or "signal" in message:
+            break
+        raw = sys.stdin.buffer.readline()
+        if not raw:
+            break
+        config = json.loads(raw)
     os._exit(0)
 
 

@@ -1,4 +1,4 @@
-"""NOOA CodeActV2 with a fresh external cell and explicit tool-only RPC."""
+"""NOOA CodeActV2 with a persistent credential-free tool-only worker."""
 
 from __future__ import annotations
 
@@ -124,7 +124,13 @@ class ExternalCell:
         prepare_guard_modules(self.kit)
         self.work = self.root / "workspace"
         self.work.mkdir()
-        for name in ["codeact_child.py", "cell_proxy.py", "cell_wire.py", "sandboxing.py"]:
+        for name in [
+            "codeact_child.py",
+            "cell_proxy.py",
+            "cell_wire.py",
+            "sandboxing.py",
+            "session_cell.py",
+        ]:
             shutil.copyfile(Path(__file__).with_name(name), self.kit / name)
         (self.kit / "contracts").mkdir()
         (self.kit / "contracts/__init__.py").write_text("")
@@ -135,6 +141,8 @@ class ExternalCell:
         )
         self.process = None
         self.checkpoint = None
+        self.epoch = 0
+        self.errors = None
         self.tools = {
             name: inspect.getdoc(getattr(agent, name)) or name
             for name in TOOLS
@@ -181,7 +189,6 @@ class ExternalCell:
 
     async def run_cell(self, code, *, execution_count=1):
         token = uuid.uuid4().hex
-        checkpoint = self.work / f"state-{execution_count}.pickle"
         bindings = {k: v for k, v in self.call.bound_parameters().items() if k != "self"}
         config = {
             "cell": token,
@@ -194,35 +201,34 @@ class ExternalCell:
             "execution_count": execution_count,
             "work": str(self.work),
             "reads": [str(self.kit)],
-            "previous": str(self.checkpoint) if self.checkpoint else None,
-            "checkpoint": str(checkpoint),
         }
         ensure_child_subreaper()
         apply_cell_cgroup_pids()
-        process = await asyncio.create_subprocess_exec(
-            *launch([self.kit / "codeact_child.py"], [self.kit], [self.work]),
-            cwd=self.work,
-            env=child_environment(self.work),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,
-            limit=MAX_FRAME,
-        )
-        self.process = process
+        if self.process is None or self.process.returncode is not None:
+            self.epoch += 1
+            self.process = await asyncio.create_subprocess_exec(
+                *launch([self.kit / "codeact_child.py"], [self.kit], [self.work]),
+                cwd=self.work,
+                env=child_environment(self.work),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                start_new_session=True,
+                limit=MAX_FRAME,
+            )
+
+            async def error_output():
+                tail = b""
+                while data := await self.process.stderr.read(4096):
+                    tail = (tail + data)[-16000:]
+                return tail.decode(errors="replace")
+
+            self.errors = asyncio.create_task(error_output())
+        process = self.process
+        errors = self.errors
         process.stdin.write(dumps(config))
         await process.stdin.drain()
-
-        async def error_output():
-            parts = []
-            kept = 0
-            while data := await process.stderr.read(4096):
-                if kept < 16000:
-                    parts.append(data[: 16000 - kept])
-                    kept += len(data)
-            return b"".join(parts).decode(errors="replace")
-
-        errors = asyncio.create_task(error_output())
+        invalidate = False
         deadline = time.monotonic() + float(self.timeout)
         sequence = 0
         observations = []
@@ -296,21 +302,21 @@ class ExternalCell:
                     continue
                 if message.get("kind") != "result":
                     raise ValueError("Invalid cell response")
-                await asyncio.wait_for(
-                    process.wait(), min(10.0, max(0.001, deadline - time.monotonic()))
-                )
-                if process.returncode:
-                    raise RuntimeError("External cell did not exit successfully")
-                self.checkpoint = (
-                    checkpoint if checkpoint.is_file() and not checkpoint.is_symlink() else None
-                )
+                invalidate = message.get("status") == "exception" or "signal" in message
                 result = ExecutionResult(
                     stdout=str(message.get("stdout", ""))[:32000],
                     stderr=str(message.get("stderr", ""))[:16000],
                     wrapper_line_offset=int(message.get("wrapper_line_offset", 0)),
                 )
                 if message.get("error"):
-                    result.error = RuntimeError(str(message["error"])[-16000:])
+                    result.error = RuntimeError(
+                        str(message["error"])[-16000:]
+                        + (
+                            "\nOrchestration kernel reset; prior tool effects remain recorded."
+                            if invalidate
+                            else ""
+                        )
+                    )
                 if "signal" in message:
                     result.signal = _ReturnResultSignal(
                         result=decode(message["signal"], self.registry)
@@ -319,32 +325,46 @@ class ExternalCell:
                     result.returned_value = decode(message["returned_value"], self.registry)
                 return observed(result)
         except asyncio.CancelledError:
-            self.checkpoint = None
+            invalidate = True
             raise
         except TimeoutError as error:
-            self.checkpoint = None
+            invalidate = True
             return observed(ExecutionResult(stdout="", error=RuntimeError(str(error)[:4000])))
         except Exception as error:  # noqa: BLE001 - untrusted execution/service boundary
-            self.checkpoint = None
+            invalidate = True
             return observed(
                 ExecutionResult(
                     stdout="", error=RuntimeError("External cell failed: " + str(error)[:4000])
                 )
             )
         finally:
-            await reap(process)
-            await errors
-            self.process = None
+            if invalidate:
+                process.stdin.close()
+                try:
+                    await asyncio.wait_for(process.wait(), 0.5)
+                except TimeoutError:
+                    pass
+                await reap(process)
+                await errors
+                self.process = None
 
     async def aclose(self):
+        if self.process:
+            self.process.stdin.close()
+            try:
+                await asyncio.wait_for(self.process.wait(), 0.5)
+            except TimeoutError:
+                pass
         await reap(self.process)
+        if self.errors:
+            await self.errors
         self.process = None
         self.temp.cleanup()
 
 
 class SecureCodeActV2(CodeActV2):
     async def sandbox_context(self, runtime):
-        return "外层代码在新建无凭据进程内执行，只能使用声明的工具代理和临时本地变量；不能访问主控对象或项目文件。完整科学Python通过run_code/run_script执行，读取DATASET并保存artifacts。"
+        return "外层代码在本次生成调用的长驻无凭据进程内执行，只能使用声明的工具代理和持续Python变量；运行异常使内核重置，已完成工具副作用不回滚；不能访问主控对象或项目文件。完整科学Python通过run_code/run_script执行，读取DATASET并保存artifacts。"
 
     def _create_sandbox_executor(self, runtime, call, builtins):
         return ExternalCell(runtime.agent, call, self.config.cell_timeout)

@@ -48,9 +48,11 @@ def test_virtual_revisions_keep_original_function_traceback_and_do_not_replay(tm
             assert before["stdout"].strip() == "1"
             assert (await agent.code_run("features", 2))["ok"]
             after = await agent.run_code("print(counter, score(2))\nold_score(2)")
-            assert after["stdout"].strip() == "2 1.0"
-            assert "cell://features@1" in after["output"]
-            assert "return x / 0" in after["output"]
+            # Runtime failure resets the whole epoch, including the stale alias.
+            assert before["state_effect"] == "reset"
+            assert after["epoch"] > before["epoch"]
+            assert after["stdout"].strip() == "1 1.0"
+            assert "NameError" in after["output"] and "old_score" in after["output"]
             archived = await agent.read_execution(first["execution_ref"])
             assert archived["source_ref"] == "cell://features@1"
             assert archived["fields"]["code"]["text"] == source
