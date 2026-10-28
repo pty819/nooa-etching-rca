@@ -916,6 +916,52 @@ def _proc_children(root_pid: int) -> set[int]:
     return found
 
 
+def reap_cell_children(root_pid: int, infrastructure: set[int]) -> None:
+    """Stop cell descendants while preserving the pre-source Linux kernel chain.
+
+    The host observes /proc outside the sandbox. Orphans stay under namespace
+    init/subreaper, including children that called setsid or rapidly forked.
+    Fail closed if a live descendant survives the bounded sweep.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    import time
+
+    def live_children():
+        found = set()
+        for pid in _proc_children(root_pid) - infrastructure:
+            try:
+                raw = Path(f"/proc/{pid}/stat").read_text()
+                if raw[raw.rfind(")") + 2 :].split()[0] != "Z":
+                    found.add(pid)
+            except FileNotFoundError:
+                pass
+        return found
+
+    deadline = time.monotonic() + 3
+    quiet = 0
+    while time.monotonic() < deadline:
+        live = live_children()
+        if not live:
+            quiet += 1
+            if quiet >= 3:
+                return
+            time.sleep(0.002)
+            continue
+        quiet = 0
+        for pid in live:
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+        for pid in live | live_children():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    raise RuntimeError("Cell subprocess cleanup did not quiesce")
+
+
 def _darwin_group_has_no_live_members(group: int) -> bool:
     """Verify Darwin's zombie-only EPERM without hiding live permission failures."""
     import subprocess

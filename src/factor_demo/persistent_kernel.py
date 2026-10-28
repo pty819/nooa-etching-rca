@@ -5,7 +5,7 @@ import json
 import os
 import uuid
 
-from .sandboxing import child_environment, launch, reap
+from .sandboxing import _proc_children, child_environment, launch, reap, reap_cell_children
 
 
 class PersistentKernel:
@@ -17,6 +17,7 @@ class PersistentKernel:
         self.kernel_id = uuid.uuid4().hex
         self.lock = asyncio.Lock()
         self.diagnostics = None
+        self.infrastructure = set()
 
     async def _drain(self, reader):
         # Bootstrap diagnostics must not fill a pipe during a running session.
@@ -56,6 +57,16 @@ class PersistentKernel:
             ).encode()
         )
         await self.process.stdin.drain()
+        try:
+            async with asyncio.timeout(15):
+                ready = json.loads(await self.process.stdout.readline())
+                if ready != {"status": "ready"}:
+                    raise ValueError("Invalid kernel bootstrap")
+            # Captured before any user source runs: wrappers/init and Python only.
+            self.infrastructure = _proc_children(self.process.pid)
+        except BaseException:
+            await self.close()
+            raise
 
     async def close(self):
         if self.process:
@@ -147,6 +158,9 @@ class PersistentKernel:
                         returncode = response.get("returncode", 0 if status == "completed" else 1)
                         exception_type = response.get("exception_type")
                         variables = response.get("variables", {})
+                    # A successful cell must not leave background subprocesses alive.
+                    # Keep the trusted bootstrap process chain and the live namespace.
+                    await asyncio.to_thread(reap_cell_children, process.pid, self.infrastructure)
             except TimeoutError:
                 status = "timeout"
             except asyncio.CancelledError as error:

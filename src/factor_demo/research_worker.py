@@ -23,6 +23,7 @@ async def main():
         "DATASET": Path(setup["dataset"]),
         "DATASET_ID": setup["dataset_id"],
     }
+    control.write(json.dumps({"status": "ready"}) + "\n")
     while raw := sys.stdin.buffer.readline():
         request = json.loads(raw)
         if request.get("op") == "close":

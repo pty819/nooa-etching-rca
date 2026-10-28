@@ -19,3 +19,5 @@ Both layers retain one namespace/event loop for successive cells in a generation
 Scientific stdout/stderr are per-cell files streamed by the host, separate from request-correlated completion frames; printing JSON cannot complete a cell. Completion data still originates in the untrusted Python process and is not proof of mathematical validity or protection against malicious same-process introspection. Host evidence checks remain required. Hard CPU limits apply cumulatively over a kernel lifetime; each cell also has a wall-clock deadline.
 
 macOS RLIMIT_NPROC is opt-in because it counts the entire login uid; explicit limits remain honored. This carries forward the necessary process-cap fix also proposed in PR #8, without its dependency upgrade.
+
+On Linux, successful cell completion includes a host-side /proc sweep that stops and kills subprocess descendants (including setsid/fork chains), preserving only the pre-source kernel bootstrap chain. Cleanup failure invalidates the kernel. Python objects remain live; background subprocesses do not survive cell boundaries.
