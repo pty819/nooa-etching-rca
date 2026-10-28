@@ -916,6 +916,24 @@ def _proc_children(root_pid: int) -> set[int]:
     return found
 
 
+def _darwin_group_has_no_live_members(group: int) -> bool:
+    """Verify Darwin's zombie-only EPERM without hiding live permission failures."""
+    import subprocess
+
+    result = subprocess.run(
+        ["/bin/ps", "-axo", "pgid=,stat="],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        pgid, status = line.split()
+        if int(pgid) == group and not status.startswith("Z"):
+            return False
+    return True
+
+
 def _kill_tree(root_pid: int) -> None:
     """SIGKILL the process group and every live /proc descendant (setsid-safe).
 
@@ -931,6 +949,11 @@ def _kill_tree(root_pid: int) -> None:
             os.killpg(root_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Darwin returns EPERM for an exited, unreaped group leader too.
+            # Root-PID absence alone is insufficient: live group members may remain.
+            if sys.platform != "darwin" or not _darwin_group_has_no_live_members(root_pid):
+                raise
         if not descendants:
             quiet += 1
             if quiet >= 3:
