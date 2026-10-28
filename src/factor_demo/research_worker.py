@@ -28,7 +28,7 @@ async def main():
         if request.get("op") == "close":
             break
         saved = [os.dup(1), os.dup(2)]
-        status, error_type = "completed", None
+        status, error_type, returncode = "completed", None, 0
         try:
             with open(request["stdout"], "w") as out, open(request["stderr"], "w") as err:  # noqa: ASYNC230 - dedicated isolated kernel
                 sys.stdout.flush()
@@ -47,11 +47,14 @@ async def main():
                 try:
                     await execute_source(request["code"], executing, request["filename"])
                 except BaseException as error:  # noqa: BLE001 - cell execution boundary
+                    returncode = 1
                     error_type = type(error).__name__
                     status = "syntax_error" if isinstance(error, CellCompileError) else "exception"
                     if isinstance(error, SystemExit) and error.code in (None, 0):
-                        status, error_type = "completed", None
+                        status, error_type, returncode = "completed", None, 0
                     else:
+                        if isinstance(error, SystemExit) and isinstance(error.code, int):
+                            returncode = error.code
                         traceback.print_exc()
                 finally:
                     sys.stdout.flush()
@@ -69,6 +72,7 @@ async def main():
                     "request_id": request["request_id"],
                     "status": status,
                     "exception_type": error_type,
+                    "returncode": returncode,
                     "variables": variables,
                 }
             )

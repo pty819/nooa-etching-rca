@@ -118,6 +118,7 @@ class PersistentKernel:
 
             pump = asyncio.create_task(capture())
             status, exception_type, variables, interrupted = "protocol_error", None, {}, None
+            returncode = 1
             try:
                 request = {
                     "request_id": identity,
@@ -143,6 +144,7 @@ class PersistentKernel:
                         }:
                             raise ValueError("Invalid kernel completion")
                         status = response["status"]
+                        returncode = response.get("returncode", 0 if status == "completed" else 1)
                         exception_type = response.get("exception_type")
                         variables = response.get("variables", {})
             except TimeoutError:
@@ -161,7 +163,7 @@ class PersistentKernel:
                 path.unlink(missing_ok=True)
             return {
                 "ok": status == "completed",
-                "returncode": 0 if status == "completed" else 1,
+                "returncode": returncode,
                 "runtime_status": status,
                 "exception_type": exception_type,
                 "kernel_id": self.kernel_id,
