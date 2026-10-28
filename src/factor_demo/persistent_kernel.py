@@ -160,7 +160,10 @@ class PersistentKernel:
                         variables = response.get("variables", {})
                     # A successful cell must not leave background subprocesses alive.
                     # Keep the trusted bootstrap process chain and the live namespace.
-                    await asyncio.to_thread(reap_cell_children, process.pid, self.infrastructure)
+                    if status in {"completed", "syntax_error"}:
+                        await asyncio.to_thread(
+                            reap_cell_children, process.pid, self.infrastructure
+                        )
             except TimeoutError:
                 status = "timeout"
             except asyncio.CancelledError as error:

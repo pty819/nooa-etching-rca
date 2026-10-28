@@ -927,12 +927,49 @@ def reap_cell_children(root_pid: int, infrastructure: set[int]) -> None:
         return
     import time
 
+    host_namespace = os.readlink("/proc/self/ns/pid")
+    namespaces = set()
+    for pid in infrastructure:
+        try:
+            namespace = os.readlink(f"/proc/{pid}/ns/pid")
+            if namespace != host_namespace:
+                namespaces.add(namespace)
+        except FileNotFoundError:
+            pass
+
+    protected_groups = {os.getpgid(pid) for pid in infrastructure | {root_pid}}
+
     def live_children():
+        candidates = _proc_children(root_pid)
+        if namespaces:
+            # A fork-exit chain can momentarily disappear from a parent graph
+            # assembled from separate /proc reads. Namespace membership survives
+            # reparenting, and never includes unrelated host processes.
+            for entry in Path("/proc").iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    if os.readlink(entry / "ns/pid") in namespaces:
+                        candidates.add(int(entry.name))
+                except (FileNotFoundError, PermissionError):
+                    # Unrelated users' /proc entries are not readable. Known
+                    # descendants are still checked below, with errors fatal.
+                    pass
         found = set()
-        for pid in _proc_children(root_pid) - infrastructure:
+        for pid in candidates - infrastructure:
             try:
                 raw = Path(f"/proc/{pid}/stat").read_text()
-                if raw[raw.rfind(")") + 2 :].split()[0] != "Z":
+                fields = raw[raw.rfind(")") + 2 :].split()
+                group = int(fields[2])
+                if group not in protected_groups:
+                    # Even a zombie records the setsid group's ID. Killing that
+                    # group catches the moving live tip of a rapid fork chain.
+                    try:
+                        os.killpg(group, signal.SIGSTOP)
+                        os.killpg(group, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if fields[0] != "Z":
                     found.add(pid)
             except FileNotFoundError:
                 pass
