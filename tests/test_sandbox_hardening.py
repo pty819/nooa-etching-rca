@@ -95,6 +95,7 @@ if pid == 0:
         open(path, 'w').write(str(i))
         time.sleep(0.5)
     os._exit(0)
+keep = object()
 print('child', pid)
 """,
                 60,
@@ -104,6 +105,9 @@ print('child', pid)
             await asyncio.sleep(2.0)
             second = beat.read_text().strip() if beat.exists() else first
             assert first == second or int(second) <= int(first) + 1, (first, second)
+            again = await ws.execute("assert keep is keep; print('kernel survived')", 60)
+            assert again["ok"], again["output"]
+            assert again["epoch"] == result["epoch"]
         finally:
             await ws.close()
 

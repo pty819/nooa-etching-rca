@@ -54,23 +54,26 @@ def test_audit_failure_does_not_replace_original_exception(endpoint, tmp_path, m
         events.close()
 
 
-def test_script_exit_is_structured_and_printed_text_cannot_change_it(tmp_path):
+@pytest.mark.parametrize("exit_code, expected", [(3, 3), (0, 0), (None, 0), ("failed", 1)])
+def test_script_exit_is_structured_and_printed_text_cannot_change_it(tmp_path, exit_code, expected):
     root = public_case(tmp_path / "case")
 
     async def run():
         worker = PythonWorkspace(root)
         agent = AutoresearchAgent(worker, llm=FakeLLMClient())
         try:
-            await agent.write_file("artifacts/fail.py", "raise SystemExit(3)")
+            await agent.write_file("artifacts/fail.py", f"raise SystemExit({exit_code!r})")
             result = await agent.run_script("artifacts/fail.py")
-            assert result["returncode"] == 3 and not result["ok"]
+            assert result["returncode"] == expected
+            assert result["ok"] == (expected == 0)
             await agent.run_code("print('RC: 1')")
             rows = [json.loads(x) for x in (root / "execution.jsonl").read_text().splitlines()]
             failures = [
                 r for r in rows if r["kind"] == "script" and r["returncode"] not in (None, 0)
             ]
-            assert len(failures) == 1
-            assert failures[0]["returncode"] == 3
+            assert len(failures) == (0 if expected == 0 else 1)
+            if failures:
+                assert failures[0]["returncode"] == expected
         finally:
             await worker.close()
             await agent.aclose()

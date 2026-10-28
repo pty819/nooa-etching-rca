@@ -64,8 +64,12 @@ def test_free_code_persists_and_fails_recoverably_with_real_os_boundaries(tmp_pa
                     await agent.write_file("../outside.py", "not allowed")
             finally:
                 await agent.aclose()
-            assert not (await worker.execute("raise ValueError('scientific failure')"))["ok"]
-            assert (await worker.execute("print(x.size)"))["output"].strip() == "5"
+            failed = await worker.execute("raise ValueError('scientific failure')")
+            assert not failed["ok"] and failed["state_effect"] == "reset"
+            assert (await worker.execute("print('x' in globals())"))["output"].strip() == "False"
+            assert (
+                await worker.execute("import numpy as np\nfrom pathlib import Path\nx=np.arange(5)")
+            )["ok"]
             code = (
                 f"try:\n Path({str(secret)!r}).read_text()\n"
                 "except (PermissionError, FileNotFoundError): print('SECRET_DENIED')\n"

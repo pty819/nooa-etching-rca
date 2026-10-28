@@ -69,6 +69,7 @@ streaming
 :caption: 工程与验收
 
 security
+repl-runtime
 linux-arm
 audit-remediation
 operations

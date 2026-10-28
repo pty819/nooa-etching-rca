@@ -9,9 +9,11 @@
 
 ## 外层 CodeAct 与科学代码
 
-NOOA仍负责CodeActV2的推理、工具策略、历史和自动摘要；`SecureCodeActV2`将外层cell改为全新启动的独立进程。它只拿到声明的工具代理、参数和结构化契约，没有live agent、模型客户端、凭据或父进程对象。工具请求采用限长JSON，宿主独立核对方法白名单、参数类型、cell身份和调用序号。它不能通过反序列化让宿主加载任意Python对象。
+NOOA仍负责CodeActV2的推理、工具策略、历史和自动摘要；`SecureCodeActV2`让同一次生成调用的外层cell共用一个无凭据长驻进程。它只拿到声明的工具代理、参数和结构化契约，没有live agent、模型客户端、凭据或父进程对象。工具请求采用限长JSON，宿主独立核对方法白名单、参数类型、cell身份和调用序号。它不能通过反序列化让宿主加载任意Python对象。
 
-科学代码也逐cell启动全新进程，保留自由Python及已安装科学库。变量检查点只在下一次受限子进程中反序列化，宿主不反序列化。脚本使用真实进程退出码；stdout/stderr仅作为输出文本，无法声明执行成功。一次输出最多保留262144字符，其余继续排空并标记截断；不会留下下一cell误收的协议响应。超时、取消和结束清理整个进程组。
+科学代码也使用长驻进程，同一次研究调用共享namespace和事件循环，不通过pickle恢复变量。编译错误不执行，保留现有状态；运行异常使受影响内核失效并停止，下一次执行使用新epoch。脚本使用独立临时内核。超时、取消、崩溃和结束清理进程组；已经发生的工具副作用和文件写入不回滚。新用户请求仍建立新研究调用，磁盘对话存档不代表活对象已恢复。
+
+科学stdout/stderr写入每cell独立文件并由宿主流式读取，与限长、请求关联的完成帧分开；打印JSON不会完成cell。stdout保留首部、stderr保留尾部，各262144字符并继续排空。完成帧来自不可信Python执行进程，不能作为抵御恶意同进程代码伪造的证明，也不证明科学正确性；仍需宿主证据检查。缺失匹配完成帧的退出视为崩溃。CPU资源上限按内核生命周期累计，每cell另外有墙钟截止时间。
 
 macOS使用deny-default的sandbox-exec规则；Linux使用Landlock或bubblewrap的受限挂载视图，再设置seccomp和资源上限；缺少Landlock时会实际验证命名空间后端，而不是依据内核版本猜测。仅允许解释器/依赖、引导代码、选中只读数据版本与本方向workspace；`factor_demo`应用源码从运行库授权中排除。Linux引导仅复制固定NOOA版本的底层约束模块并保留许可头，不在每个科学进程导入整套agent SDK；子进程显式使用本地模型成本表，避免无关初始化。`FACTOR_LINUX_BACKEND=auto`下若Landlock与bubblewrap都不可用（如内核<5.13的Kubernetes容器），会记录警告并回退到`process`后端（仅rlimit+尽力seccomp，文件系统隔离依赖容器，见[Linux部署指南](linux-arm.md)）；设置`FACTOR_STRICT_BACKEND=1`或显式选择`landlock`/`bubblewrap`时仍拒绝执行。Linux实际运行验收以Runtime checks工作流为准，不能由文档构建代替。
 

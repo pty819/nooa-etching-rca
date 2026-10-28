@@ -506,6 +506,10 @@ def cell_nproc_limit() -> int:
 def _apply_nproc_rlimit() -> None:
     import resource
 
+    # XNU counts all processes of this login uid; a default cap can break every
+    # scientific subprocess on a busy desktop. Explicit operator limits remain.
+    if sys.platform == "darwin" and "FACTOR_CELL_NPROC" not in os.environ:
+        return
     limit = cell_nproc_limit()
     try:
         _soft, hard = resource.getrlimit(resource.RLIMIT_NPROC)
@@ -912,6 +916,107 @@ def _proc_children(root_pid: int) -> set[int]:
     return found
 
 
+def reap_cell_children(root_pid: int, infrastructure: set[int]) -> None:
+    """Stop cell descendants while preserving the pre-source Linux kernel chain.
+
+    The host observes /proc outside the sandbox. Orphans stay under namespace
+    init/subreaper, including children that called setsid or rapidly forked.
+    Fail closed if a live descendant survives the bounded sweep.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    import time
+
+    host_namespace = os.readlink("/proc/self/ns/pid")
+    namespaces = set()
+    for pid in infrastructure:
+        try:
+            namespace = os.readlink(f"/proc/{pid}/ns/pid")
+            if namespace != host_namespace:
+                namespaces.add(namespace)
+        except FileNotFoundError:
+            pass
+
+    protected_groups = {os.getpgid(pid) for pid in infrastructure | {root_pid}}
+
+    def live_children():
+        candidates = _proc_children(root_pid)
+        if namespaces:
+            # A fork-exit chain can momentarily disappear from a parent graph
+            # assembled from separate /proc reads. Namespace membership survives
+            # reparenting, and never includes unrelated host processes.
+            for entry in Path("/proc").iterdir():
+                if not entry.name.isdigit():
+                    continue
+                try:
+                    if os.readlink(entry / "ns/pid") in namespaces:
+                        candidates.add(int(entry.name))
+                except (FileNotFoundError, PermissionError):
+                    # Unrelated users' /proc entries are not readable. Known
+                    # descendants are still checked below, with errors fatal.
+                    pass
+        found = set()
+        for pid in candidates - infrastructure:
+            try:
+                raw = Path(f"/proc/{pid}/stat").read_text()
+                fields = raw[raw.rfind(")") + 2 :].split()
+                group = int(fields[2])
+                if group not in protected_groups:
+                    # Even a zombie records the setsid group's ID. Killing that
+                    # group catches the moving live tip of a rapid fork chain.
+                    try:
+                        os.killpg(group, signal.SIGSTOP)
+                        os.killpg(group, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if fields[0] != "Z":
+                    found.add(pid)
+            except FileNotFoundError:
+                pass
+        return found
+
+    deadline = time.monotonic() + 3
+    quiet = 0
+    while time.monotonic() < deadline:
+        live = live_children()
+        if not live:
+            quiet += 1
+            if quiet >= 3:
+                return
+            time.sleep(0.002)
+            continue
+        quiet = 0
+        for pid in live:
+            try:
+                os.kill(pid, signal.SIGSTOP)
+            except ProcessLookupError:
+                pass
+        for pid in live | live_children():
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    raise RuntimeError("Cell subprocess cleanup did not quiesce")
+
+
+def _darwin_group_has_no_live_members(group: int) -> bool:
+    """Verify Darwin's zombie-only EPERM without hiding live permission failures."""
+    import subprocess
+
+    result = subprocess.run(
+        ["/bin/ps", "-axo", "pgid=,stat="],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    for line in result.stdout.splitlines():
+        pgid, status = line.split()
+        if int(pgid) == group and not status.startswith("Z"):
+            return False
+    return True
+
+
 def _kill_tree(root_pid: int) -> None:
     """SIGKILL the process group and every live /proc descendant (setsid-safe).
 
@@ -927,6 +1032,11 @@ def _kill_tree(root_pid: int) -> None:
             os.killpg(root_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            # Darwin returns EPERM for an exited, unreaped group leader too.
+            # Root-PID absence alone is insufficient: live group members may remain.
+            if sys.platform != "darwin" or not _darwin_group_has_no_live_members(root_pid):
+                raise
         if not descendants:
             quiet += 1
             if quiet >= 3:

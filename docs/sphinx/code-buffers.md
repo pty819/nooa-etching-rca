@@ -32,7 +32,12 @@ in the scientific namespace; it does not replay previous cells. Old function
 references remain old, removed definitions remain until explicitly deleted,
 and side effects run again only when the agent explicitly executes code.
 Errors in old functions retain the corresponding virtual source name and line
-through worker checkpoints, for example `cell://features@1`.
+in the live kernel's linecache, for example `cell://features@1`.
+
+A runtime exception invalidates the entire affected kernel: old definitions and
+aliases are lost, and the next execution starts a new epoch. Compilation failure
+preserves the current kernel because no user code executed. Reload inputs and
+explicitly run the repaired source; never assume a failed cell was rolled back.
 
 Buffer revisions and execution archives survive new turns. Live Python state
 still resets on a new research turn or dataset change. Re-execution must be

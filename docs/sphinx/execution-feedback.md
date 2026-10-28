@@ -19,5 +19,8 @@ retain both ends, and explicitly report truncation.
 The current execution and most recent failure are included in dynamic research
 context so conversation compression does not remove the immediate repair target.
 Namespaces last for one research turn and reset on a new turn; archive recovery
-does not replay code or restore live Python objects. Timeouts, cancellation and
-dataset changes also reset the scientific checkpoint.
+does not replay code or restore live Python objects. Runtime exceptions, timeouts, cancellation and
+dataset changes invalidate the scientific kernel. Syntax/compile failures leave
+the current live namespace untouched. Results report kernel ID, epoch, runtime
+status and state effect separately from output; a successful run does not prove
+that a scientific goal was met.
