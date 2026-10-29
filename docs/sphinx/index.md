@@ -24,7 +24,9 @@
 | 项目 | 当前实现 |
 |---|---|
 | 数据 | 通用ICP硅刻蚀降阶仿真；200通道、11步骤、每次356秒 |
-| 研究 | NOOA CodeActV2，通用科学Python；不限定研究算法 |
+| 研究 | NOOA CodeActV2，外层/科学长驻内核；活对象只在各自当前生命周期 |
+| 编辑与实验 | 精确revision编辑/执行，独立冻结输入实验，检查后显式发布，旧结果stale |
+| 纠错 | 宿主父子执行证据、原失败路径复验、独立具名目标检查与只读反思 |
 | 公式比较 | 任意原始序列算子、版本、固定lot验证与模型比较、最佳重跑及强制交接 |
 | 可靠性 | 前后置校验、LoopGuard、Predict审查、最多两次定向修订 |
 | 并行 | 主研究动态派生独立分支；默认两个分支活跃 |
@@ -32,7 +34,7 @@
 | 前端 | Vue 3、TypeScript、Vite；持久SSE、Markdown、PNG与CSV表格 |
 | 平台 | macOS sandbox-exec；Linux Landlock/bubblewrap与seccomp，缺少机制时拒绝执行 |
 
-NOOA依赖固定在 `bff0ef449f9bd74ddbb19486489f95c0edc73831`，没有修改上游vendor。研究运行配置为272000总上下文、50000输出上限，自动摘要阈值177600。实际值可在[自动生成的配置参考](_generated/contracts.md)检查。
+NOOA包版本为 `0.0.11.dev473`，依赖固定在 `bff0ef449f9bd74ddbb19486489f95c0edc73831`，没有修改上游vendor。研究运行配置为272000总上下文、50000输出上限，自动摘要阈值177600。实际值可在[自动生成的配置参考](_generated/contracts.md)检查。
 
 :::{important}
 GitHub Pages发布的是静态设计文档，不是研究服务。仓库不包含API密钥、原始私有对话、已有运行数据库或生成的数据集。公开源码包含仿真方法与故障设定；要进行盲评，研究agent仍只能获得导出的公开发现集，不能获得整个仓库。
@@ -86,6 +88,7 @@ references
 :caption: 源码生成的参考
 
 _generated/contracts
+_generated/tools
 _generated/modules
 _generated/cli
 ```

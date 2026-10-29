@@ -22,6 +22,12 @@
 
 特征名规范为 `sensor__step_NN__statistic`。例如 `he_edge_pressure_torr__step_04__mean` 指第一次加工step的边缘背氦压力均值；它不等于“稳态均值”，因为默认提取器包含该step内全部采样点。
 
+## 执行与实验的持久身份
+
+`.execution/code.sqlite` 保存 `cell://name@revision` 源码及哈希；`ledger.sqlite` 和 `cell_*` 私有归档保存所属workspace中的 `execution_ref`。`experiments.sqlite` 保存跨源码依赖、参数、冻结输入和暂存产物的 `experiment_id`；实验子目录还有自己的科学执行归档。`observations.sqlite` 通过全局唯一 `observation_id` 和 `parent_id` 串联外层cell、科学执行、实验及复验，并单独记录修复关系。
+
+这些ID不能互换，也不表示Python对象可以跨进程直接传递。`code_read_experiment` 读实验manifest，`read_execution` 读本workspace的科学归档，`read_observation` 分页读跨层记录。发布结果的current/stale与执行status分开，详见[执行反馈](execution-feedback.md)。
+
 ## 结构化研究交接
 
 `ResearchReply`包含 `summary`、`hypotheses`、`evidence`、`artifacts`、`next_experiments`、`questions_for_expert`。`Hypothesis`有独立的id、title、status、mathematical_evidence、evidence_files、evidence_ids、alternative_explanation和falsification_test。

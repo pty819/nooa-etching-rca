@@ -1,6 +1,6 @@
 # Linux与ARM64部署
 
-系统支持Linux x86_64与aarch64，并不依赖macOS。执行后端按实际能力选择：优先使用Landlock；未编入Landlock的Linux内核使用bubblewrap的用户、挂载、PID和网络命名空间。两个后端均在生成代码执行前设置seccomp与资源上限。没有可用的受限后端时明确报错。
+系统支持Linux x86_64与aarch64，并不依赖macOS。执行后端按实际能力选择：优先使用Landlock；未编入Landlock的Linux内核使用bubblewrap的用户、挂载、PID和网络命名空间。两个后端均在生成代码执行前设置seccomp与资源上限。当两者不可用时，`auto`会警告并回退到依赖容器外部隔离的`process`后端；`FACTOR_STRICT_BACKEND=1`或显式强制Landlock/bubblewrap时拒绝该降级。
 
 ## 先检查部署宿主
 
@@ -12,7 +12,7 @@ uv run --no-sync factor-demo doctor --warm-font-cache
 
 `doctor`显示平台、架构、选中的backend和Landlock ABI。内核版本号不能代替功能检查：实测ARM NAS的7.1.8内核返回Landlock不可用，但已安装的bubblewrap 0.11.1可以正常创建所需命名空间。
 
-`--warm-font-cache`在部署阶段预热Matplotlib字体索引，首次扫描可能较慢。每个cell只复制索引JSON到自己的可写缓存，不能修改部署缓存。Linux只读挂载字体配置与fontconfig缓存；图表生成仍在受限worker内完成。user service自动预热，并为首次启动保留600秒，避免首次绘图把cell的计算时限耗在字体扫描上。
+`--warm-font-cache`在部署阶段预热Matplotlib字体索引，首次扫描可能较慢。每个新执行内核只复制索引JSON到自己的可写缓存，不能修改部署缓存。Linux只读挂载字体配置与fontconfig缓存；图表生成仍在受限worker内完成。user service自动预热，并为首次启动保留600秒，避免首次绘图把cell的计算时限耗在字体扫描上。
 
 无Landlock时安装发行版的bubblewrap包，例如Debian/Ubuntu的`sudo apt-get install bubblewrap`。`FACTOR_LINUX_BACKEND=auto`为默认值，也可在独立测试进程中显式选择`landlock`或`bubblewrap`。强制选择失败不会自动换成无限制执行；主机限制了用户命名空间时，doctor会报告bubblewrap的实际失败原因。
 
@@ -20,9 +20,9 @@ Ubuntu的AppArmor可能还需要为`/usr/bin/bwrap`授予创建用户命名空�
 
 ## bubblewrap后端的具体行为
 
-每个cell创建独立的空根目录。只挂载解释器、依赖、只读bootstrap、当前选中数据版本和本方向工作区；不将宿主根目录整体交给研究代码。`/lib`、`/lib64`等标准符号链接保留，保证usr-merge发行版的ELF解释器可运行。根目录和输入只读，持久写入限定在工作区，设备和proc为私有运行时视图。
+每次启动受限执行内核时创建独立的空根目录；连续cell复用同一内核，独立实验和脚本建立各自临时内核。只挂载解释器、依赖、只读bootstrap、当前选中数据版本和本方向工作区；不将宿主根目录整体交给研究代码。`/lib`、`/lib64`等标准符号链接保留，保证usr-merge发行版的ELF解释器可运行。根目录和输入只读，持久写入限定在工作区，设备和proc为私有运行时视图。
 
-PID命名空间与die-with-parent保证关闭执行器时清理后代；网络命名空间与seccomp共同限制科学进程的外部连接。宿主仍通过原有模型客户端访问API；模型凭据不进入生成代码进程。bootstrap检查只读根标记，随后才加载检查点或运行生成代码。隐藏路径通常返回FileNotFoundError，而Landlock/macOS可能返回PermissionError；只读挂载的写入返回EROFS。这些都是操作被拒绝，测试检查实际不可读/不可写行为。
+PID命名空间与die-with-parent保证关闭执行器时清理后代；网络命名空间与seccomp共同限制科学进程的外部连接。宿主仍通过原有模型客户端访问API；模型凭据不进入生成代码进程。bootstrap检查只读根标记，随后运行生成代码；连续REPL不加载pickle检查点。正式学得特征的序列化训练态仍只在其隔离执行器中读取，二者是不同机制。隐藏路径通常返回FileNotFoundError，而Landlock/macOS可能返回PermissionError；只读挂载的写入返回EROFS。这些都是操作被拒绝，测试检查实际不可读/不可写行为。
 
 科学Python、模型比较、分支、检查点、证据重算和Markdown/SSE接口共用这套执行器，不给ARM另做缩减算法实现。后端选择不改变272k上下文、50k输出或thinking配置。
 
@@ -62,7 +62,7 @@ ssh -N -L 18765:127.0.0.1:8765 user@your-linux-host
 
 ## 持续验证
 
-Runtime checks包含Linux x86_64、[原生Linux ARM64 runner](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)和macOS，还单独强制bubblewrap运行完整Python回归，避免只验证有Landlock的默认云端环境。真正部署平台仍需执行同一套测试、自由科学代码、真实模型多轮研究与浏览器/SSE验收；不能仅凭runner名称宣布部署成功。
+仓库保留Runtime checks的Linux x86_64、ARM64、macOS与强制bubblewrap矩阵，但该工作流当前按维护决定停用，不是待等待的合并门槛。当前dev473的运行验收在82 x86 Linux执行全量回归和强制bubblewrap专项；没有新增Mac/ARM复跑。历史ARM记录保留在下节，不能推广为新版已验证。真正部署平台仍需执行同一套测试、自由科学代码、真实模型多轮研究与浏览器/SSE验收；不能仅凭runner名称宣布部署成功。
 
 ## ARM NAS实测记录
 

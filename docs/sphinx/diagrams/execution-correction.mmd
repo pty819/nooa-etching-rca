@@ -1,0 +1,11 @@
+flowchart TB
+  EDIT[code_write / code_edit<br/>精确源码revision] --> TRY[code_experiment<br/>独立worker与冻结输入]
+  TRY --> OBS[宿主观察<br/>源码、checks、异常与父子关系]
+  OBS -->|失败| NEXT[下一轮CodeAct读取证据]
+  NEXT --> EDIT
+  EDIT --> VERIFY[verify_repair<br/>重放原失败路径与相同输入]
+  VERIFY -->|通过| LINK[记录修复关系<br/>不自动宣称目标完成]
+  LINK --> GOAL[verify_goal<br/>另行重算具名断言]
+  GOAL -->|通过且产物current| PUB[code_publish<br/>显式发布到独立目录]
+  OBS -. 同一证据快照 .-> REFLECT[只读inspect_candidate]
+  PUB --> STALE[源码或数据变化<br/>旧结果stale，拒绝当前证据引用]

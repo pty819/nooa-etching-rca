@@ -1,8 +1,8 @@
 flowchart TB
   T[当前任务、专家反馈、假设台账] --> C[CodeActV2生成完整python_cell]
   C --> TOOL[调用公开工具]
-  TOOL --> EXEC[科学worker执行自由代码]
-  EXEC --> RES[真实输出与失败记录]
+  TOOL --> EXEC[主REPL或独立版本实验]
+  EXEC --> RES[宿主源码、状态与父子失败观察]
   RES --> C
   TOOL --> BR[动态分支调度]
   BR --> C

@@ -3,7 +3,7 @@ flowchart TB
   S --> P[规范化产物路径与符号链接检查]
   P --> C[CSV或Parquet列与where选择]
   C --> N[单值或明确聚合的数值复核]
-  N --> G["成功cell来源与等级<br/>原始值/模型指标独立重算"]
+  N --> G["成功cell或current实验来源与等级<br/>原始值/模型指标独立重算"]
   G --> H[run集合、证据ID、假设引用]
   H --> F[冻结当前修订文件与哈希]
   F --> Q[Predict审查证据包]

@@ -13,13 +13,17 @@
 
 ## 来源、重算与完成的反证
 
-每个EvidenceRef绑定DatasetRef和成功cell的输入/源码/产物哈希，未记录CSV不能被当成执行结果。来源等级明确区分：`exploratory_reproducible`仅表示该代码产生了该表；`derived_recomputed`只核对派生输入；`raw_recomputed`由宿主从原始版本按声明的文件、列、过滤、step时间比例及聚合独立计算；`formula_recomputed`从保护的正式模型预测核对指标。
+每个EvidenceRef绑定DatasetRef及宿主记录的成功cell或current已检查实验的输入/源码/产物来源。实验发布后若源码/输入过期或文件被改写，`artifact_proof`拒绝其当前证据引用；未记录CSV不能被当成执行结果。来源等级明确区分：`exploratory_reproducible`仅表示该代码产生了该表；`derived_recomputed`只核对派生输入；`raw_recomputed`由宿主从原始版本按声明的文件、列、过滤、step时间比例及聚合独立计算；`formula_recomputed`从保护的正式模型预测核对指标。
 
 `materialize_raw_evidence`支持原始计数、单值、mean/median/std等以及乘积/step窗口。它不执行传入源码，单位可与传感器目录核对。任意自写OPLS或复杂算子仍通过自由Python探索与正式特征流程表达，不假装宿主能证明任意程序语义。
 
 Hypothesis.checks明确planned/completed、evidence_id、比较关系和阈值；completed由宿主针对独立重算证据执行。supported需要完成且通过的检查，rejected需要已完成的失败条件，未执行的反证只能保留计划或弱结论。falsification_test和alternative_explanation保留解释用途，文本本身不能证明实验执行。
 
 这些检查仍**不能**保证全部自然语言数字都有引用、任意算法都正确，或某部件具备因果关系。正文将研究者说明与确定性事实表分开显示。
+
+## 自由代码的检查与报告门禁不同
+
+`code_experiment`的checked只代表提交的checks执行完成；`verify_repair`验证同一输入上的原失败路径，`verify_goal`只验证一个具名断言。这些状态不会替代EvidenceRef的来源/数值核对、正式公式模型指标复算、Predict审查或独立test评分，也不会自动让报告中的所有自然语言主张通过。完整的候选→复验→目标→显式发布流程见[执行运行协议](repl-runtime.md)。
 
 ## Predict审查的输入和输出
 
@@ -52,7 +56,7 @@ ReviewIssue分为evidence、statistics、physics、causality、scope、reproduci
 :alt: inspect_candidate开启只读限制，最多两次基础CodeAct执行及原生反思，保存判词后明确返回通过或未通过。
 ```
 
-`inspect_candidate`组合原生Reflexion与CodeActV2，只能读已有文本证据。公开执行/写入/发布/任务变更工具均受任务局部限制，防止重试重复发送消息或重新启动研究。宿主在限制之外保存反思审计记录。
+`inspect_candidate`将同一宿主 `execution_context()` 的快照作为 `execution_evidence` 参数交给原生Reflexion与CodeActV2组合，包含近期父子观察、未解决失败和原路径/目标验证记录；可用 `read_observation` 读取完整归档，只能读已有文本证据。公开执行/写入/发布/任务变更工具均受任务局部限制，防止重试重复发送消息或重新启动研究。宿主在限制之外保存反思审计记录。
 
 最多两次是基础执行次数上限，不是“两个额外重试再加第一次”。`TrackedReflexion`保存真实is_satisfactory、issues和suggestions，同时转接V2动态cell上下文。预算中断、原生耗尽后仍返回候选或实际满意分开记录；候选assessment写PASS不等于原生verdict通过。取消仍传播，不因预算标志被吞掉。
 

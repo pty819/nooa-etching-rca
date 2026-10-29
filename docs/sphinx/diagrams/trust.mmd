@@ -7,17 +7,17 @@ flowchart TB
     TEST["私有test · 仿真参考"] --> EVAL["冻结后收尾评分"]
     VERIFY --> MD["规范Markdown直接推送"]
   end
-  subgraph OUTER["外层生成代码：无凭据新进程"]
+  subgraph OUTER["外层生成代码：本次生成调用长驻"]
     CELL["CodeAct cell<br/>仅声明工具与参数"]
   end
   NOOA --> CELL
   CELL --> RPC
-  subgraph SCIENCE["科学代码：逐cell新进程"]
+  subgraph SCIENCE["科学代码：当前研究轮长驻内核"]
     PY["自由Python · 已安装科学库"]
     IN["当前DATASET只读版本"] --> PY
     PY --> WORK["仅本方向工作区可写"]
   end
   RPC --> PY
-  PY -->|"stdout仅文本 · 实际退出码"| LEDGER
-  RULES["macOS deny-default<br/>Linux Landlock / bubblewrap + seccomp<br/>检查点只在子进程加载"] -.-> OUTER
+  PY -->|"分离的输出文件与完成协议"| LEDGER
+  RULES["macOS deny-default<br/>Linux Landlock / bubblewrap + seccomp<br/>REPL不靠pickle恢复活对象"] -.-> OUTER
   RULES -.-> SCIENCE

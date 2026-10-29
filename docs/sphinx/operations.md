@@ -19,7 +19,7 @@ python3 -m http.server 8877 --directory docs/_build/html
 当前完整自由研究要求macOS sandbox-exec或Linux Landlock/bubblewrap与seccomp、Python3.12/3.13、uv与Node24。先同步运行依赖和前端：
 
 ```bash
-uv sync --python 3.12
+uv sync --python 3.12 --frozen
 npm ci --prefix frontend
 npm run build --prefix frontend
 cp .env.example .env
@@ -62,6 +62,12 @@ uv run factor-demo autoresearch-audit --run runs/my-case
 
 运行中通过Web向选中方向发送消息会进入该轮指导；空闲时发送会开始新轮。恢复指定分支应在当前主任务结束后进行，不重新派生整套父研究。目录中的Python变量不会跨进程恢复，需重新运行已保存的初始化脚本。
 
+## 更新代码与检查依赖
+
+合并PR、同步本地源码、同步虚拟环境和重启运行中的服务是不同动作。先核对 `git status` 并保存需要保留的本地改动，再 `git fetch origin` / `git merge --ff-only origin/main`；锁文件中的NOOA版本变化后，需要在该运行目录执行 `uv sync --frozen --python 3.12`，不能靠本地Git提交已更新就判断进程已加载新版。不要把一个测试目录的依赖安装当作另一个日常环境已经更新。
+
+当前锁定NOOA `0.0.11.dev473`、上游 `bff0ef4`。独立实验和持续REPL的主流程见[执行运行协议](repl-runtime.md)；本轮Python失败重建内核后应根据宿主观察显式重建输入，不自动重放历史工具副作用。
+
 ## 服务重启和异常恢复
 
 ```{mermaid} diagrams/recovery.mmd
@@ -78,7 +84,7 @@ uv run factor-demo autoresearch-audit --run runs/my-case
 :alt: 文档依赖和Mermaid安装后生成引用、严格构建并检查；上传产物，只有主分支非PR允许独立部署job发布静态站。
 ```
 
-workflow以push、pull_request和workflow_dispatch触发。构建job固定Ubuntu24.04，安装Python3.12、Node22和锁定uv，构建SVG与静态站；权限为contents:read。部署job依赖构建成功，只在本仓库main分支的非PR事件运行，使用pages:write和id-token:write及github-pages环境。PR不能通过此工作流获取生产模型key，因为工作流根本不需要模型secret。
+这里指仍启用的 `Sphinx documentation`（`docs.yml`），以push、pull_request和workflow_dispatch触发。运行测试的 `Runtime checks`（`tests.yml`）文件仍在仓库，但已按维护决定停用；当前运行验收在82 x86 Linux完成。两者分别管理，停用运行CI不等于停止文档发布。构建job固定Ubuntu24.04，安装Python3.12、Node22和锁定uv，构建SVG与静态站；权限为contents:read。部署job依赖构建成功，只在本仓库main分支的非PR事件运行，使用pages:write和id-token:write及github-pages环境。PR不能通过此工作流获取生产模型key，因为工作流根本不需要模型secret。
 
 首次仓库需启用Pages的workflow发布源；后续直接推送main即可重新构建。站点在仓库子路径下，必须同时检查首页、章节、CSS与SVG的200状态，不能只看GitHub Actions绿色。部署操作和图源均可由仓库历史审查。
 
