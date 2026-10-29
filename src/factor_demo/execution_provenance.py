@@ -77,6 +77,13 @@ def record_cell(run: Path, record, source: Path, data_root: Path, before=None, *
 
 
 def artifact_proof(run, name, execution_ref=None):
+    # Never let a later ordinary cell launder stale experiment output.
+    if len(Path(name).parts) > 1 and Path(name).parts[1].startswith("experiment-"):
+        from .code_experiments import CodeExperiments
+        from .research_workspace import PythonWorkspace
+
+        return CodeExperiments(PythonWorkspace(run)).proof(name, execution_ref)
+
     path = run / ".execution/ledger.sqlite"
     if not path.exists():
         raise ValueError("Evidence has no trusted execution provenance")

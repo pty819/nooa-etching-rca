@@ -310,7 +310,16 @@ class PythonWorkspace:
             }
 
     def execution_context(self):
+        from .code_experiments import CodeExperiments
+
+        experiments = []
+        if (self.run / ".execution/experiments.sqlite").exists():
+            experiments = [
+                {k: doc[k] for k in ("experiment_id", "status", "validity", "published")}
+                for doc in CodeExperiments(self).catalog()
+            ]
         return {
+            "code_experiments": experiments,
             "namespace": "current research turn only; new turn starts empty",
             "checkpoint_available": False,
             "kernel_id": self.kernel.kernel_id if self.kernel else None,

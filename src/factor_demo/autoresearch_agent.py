@@ -408,6 +408,59 @@ class AutoresearchAgent(Agent):
         doc = CodeBuffers(self._workspace.run).get(name, revision)
         return await self._workspace.execute(doc["source"], timeout_s, source_ref=doc["source_ref"])
 
+    async def code_experiment(
+        self,
+        name: str,
+        revision: int,
+        checks: str,
+        dependencies: dict[str, int] | None = None,
+        parameters: dict | None = None,
+        timeout_s: int = 120,
+    ) -> dict:
+        """Run explicit source revisions in a fresh disposable scientific worker.
+
+        Dependencies execute in supplied insertion order, then candidate, then checks.
+        No main REPL objects/files are inherited. DATASET is a frozen input copy;
+        PARAMETERS contains JSON inputs. Use assert-based checks for the goal and
+        original failure path. Success means these supplied checks passed, not that
+        the research goal is independently proven. Artifacts remain staged; use
+        code_publish only after inspecting code_read_experiment. Main memory survives
+        any experiment failure. No automatic replay or publication.
+        """
+        await self._writable()
+        if not self._workspace.research_enabled:
+            raise PermissionError("Discussion mode cannot run experiments")
+        from .code_experiments import CodeExperiments
+
+        return await CodeExperiments(self._workspace).execute(
+            name, revision, dependencies or {}, parameters or {}, checks, timeout_s
+        )
+
+    async def code_read_experiment(self, experiment_id: str) -> dict:
+        """Read the host manifest, exact sources/parameters/checks, output and validity.
+
+        Source/data edits make historical results stale even after publication.
+        Failed, cancelled and timed-out experiments are retained for diagnosis.
+        """
+        from .code_experiments import CodeExperiments
+
+        return CodeExperiments(self._workspace).get(experiment_id)
+
+    async def code_publish(self, experiment_id: str) -> dict:
+        """Publish current checked experiment artifacts through the host.
+
+        Immutable destination artifacts/<experiment_id> cannot replace earlier
+        evidence. Refuses failed/stale experiments or changed staged artifacts.
+        Published files do not activate definitions in the main REPL.
+        """
+        await self._writable()
+        if not self._workspace.research_enabled:
+            raise PermissionError("Discussion mode cannot publish experiments")
+        from .code_experiments import CodeExperiments
+
+        async with self._workspace.lock:
+            return CodeExperiments(self._workspace).publish(experiment_id)
+
     async def write_file(self, path: str, content: str) -> dict:
         """Save ANY text/source file within the research workspace, without running it.
 
