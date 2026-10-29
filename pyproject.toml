@@ -35,7 +35,7 @@ docs = [
 ]
 
 [tool.uv.sources]
-nooa = { git = "https://github.com/NVIDIA-NeMo/labs-OO-Agents.git", rev = "1454b78c8f0a85c97eab1c6a91cc8cfc95b34de5" }
+nooa = { git = "https://github.com/NVIDIA-NeMo/labs-OO-Agents.git", rev = "bff0ef449f9bd74ddbb19486489f95c0edc73831" }
 
 [build-system]
 requires = ["hatchling"]
