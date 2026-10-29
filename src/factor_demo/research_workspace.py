@@ -89,6 +89,9 @@ class PythonWorkspace:
 
     def __init__(self, run: Path, events=None, research_enabled=True, read_scope_root=None):
         self.run = run.resolve()
+        from .execution_observations import ExecutionObservations
+
+        self.observations = ExecutionObservations(self.run)
         self.work = self.run / "workspace"
         self.process = None
         self.count = max(
@@ -274,6 +277,27 @@ class PythonWorkspace:
             output = record["output"]
             result["output"] = output
             record["execution_ref"] = proof
+            observation_id = self.observations.record(
+                "scientific",
+                "passed" if result["ok"] else "failed",
+                execution_ref=proof,
+                code=executed_source,
+                input_files=self.list_executions()[0]["input_files"],
+                **{
+                    key: record.get(key)
+                    for key in (
+                        "source_ref",
+                        "output",
+                        "dataset_ref",
+                        "epoch",
+                        "state_effect",
+                        "runtime_status",
+                        "exception_type",
+                    )
+                },
+            )
+            record["observation_id"] = observation_id
+            result["observation_id"] = observation_id
             write_json(private / "result.json", record)
             self.latest_execution = {
                 "execution_ref": proof,
@@ -319,6 +343,7 @@ class PythonWorkspace:
                 for doc in CodeExperiments(self).catalog()
             ]
         return {
+            "execution_evidence": self.observations.context(),
             "code_experiments": experiments,
             "namespace": "current research turn only; new turn starts empty",
             "checkpoint_available": False,

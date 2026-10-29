@@ -133,8 +133,20 @@ class CodeExperiments:
             "artifacts": {},
             "published": {},
         }
+        from .execution_observations import parent_execution
+
+        observation_id = parent.observations.record(
+            "experiment",
+            "running",
+            experiment_id=identity,
+            checks=checks,
+            code="\n\n".join(src["source"] for src in sources),
+        )
+        doc["observation_id"] = observation_id
+        observation_token = parent_execution.set(observation_id)
         self.save(doc)
         worker = PythonWorkspace(folder, events=parent.events)
+        worker.observations = parent.observations
         worker.dataset_id = dataset_id
         (worker.work / "artifacts").mkdir(parents=True)
         try:
@@ -169,6 +181,14 @@ class CodeExperiments:
                 except (ValueError, OSError) as error:
                     doc["status"] = "failed"
                     doc["host_error"] = str(error)
+            parent_execution.reset(observation_token)
+            observation = parent.observations.get(observation_id)
+            observation.update(
+                status="passed" if doc["status"] == "checked" else "failed",
+                output="\n".join(item["output"] for item in doc["executions"]),
+                error=doc.get("host_error", ""),
+            )
+            parent.observations.save(observation)
             self.save(doc)
         return self.get(identity)
 

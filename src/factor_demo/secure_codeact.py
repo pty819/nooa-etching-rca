@@ -50,6 +50,9 @@ TOOLS = frozenset(
         "code_experiment",
         "code_read_experiment",
         "code_publish",
+        "read_observation",
+        "verify_repair",
+        "verify_goal",
         "run_script",
         "reply",
         "list_artifacts",
@@ -191,6 +194,35 @@ class ExternalCell:
         return await asyncio.to_thread(method, *bound.args, **bound.kwargs)
 
     async def run_cell(self, code, *, execution_count=1):
+        workspace = getattr(self.agent, "_workspace", None)
+        if workspace is None:
+            return await self._run_cell(code, execution_count=execution_count)
+        from .execution_observations import parent_execution
+
+        journal = workspace.observations
+        identity = journal.record("orchestration", "running", code=code, epoch=self.epoch)
+        token = parent_execution.set(identity)
+        result = None
+        error = None
+        try:
+            result = await self._run_cell(code, execution_count=execution_count)
+            return result
+        except BaseException as caught:  # archive cancellation before propagating
+            error = caught
+            raise
+        finally:
+            parent_execution.reset(token)
+            doc = journal.get(identity)
+            doc.update(
+                status="failed" if error or (result and result.error) else "passed",
+                epoch=self.epoch,
+                state_effect="reset" if self.process is None else "retained",
+                output=(result.stdout + "\n" + result.stderr) if result else "",
+                error=str(error or (result.error if result else "")),
+            )
+            journal.save(doc)
+
+    async def _run_cell(self, code, *, execution_count=1):
         token = uuid.uuid4().hex
         bindings = {k: v for k, v in self.call.bound_parameters().items() if k != "self"}
         config = {
@@ -265,12 +297,27 @@ class ExternalCell:
                         )
                     try:
                         value = await asyncio.wait_for(self.dispatch(message), tool_budget)
-                        if isinstance(value, dict) and "execution_ref" in value:
+                        if isinstance(value, dict) and (
+                            "execution_ref" in value or "observation_id" in value
+                        ):
                             observations.append(
                                 json.dumps(
                                     {
                                         k: value[k]
-                                        for k in ("execution_ref", "ok", "output", "dataset_ref")
+                                        for k in (
+                                            "observation_id",
+                                            "execution_ref",
+                                            "ok",
+                                            "output",
+                                            "dataset_ref",
+                                            "source_ref",
+                                            "epoch",
+                                            "state_effect",
+                                            "runtime_status",
+                                            "exception_type",
+                                            "experiment_id",
+                                            "status",
+                                        )
                                         if k in value
                                     },
                                     ensure_ascii=False,

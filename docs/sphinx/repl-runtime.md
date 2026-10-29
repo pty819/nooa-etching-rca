@@ -50,3 +50,38 @@ Regression gate: runtime/check/timeout failures preserve main PID, object identi
 and artifact bytes; two candidate revisions retain separate traces; source edits
 and dataset-byte changes invalidate results and publication; staged/published
 symlink/tampering is refused; declared tools work through the actual CodeAct proxy.
+
+## Phase C correction evidence contract
+
+The supervisor now records outer cells, scientific executions and isolated
+experiments in `.execution/observations.sqlite`. Each observation has an immutable
+ID and a parent link, exact source/checks, output and observed kernel state. The
+outer cell is finalized even after an inner failure followed by an outer exception.
+Scientific failures remain in dynamic model context across subsequent successful
+cells and supervisor reconstruction. `read_observation` pages complete host records;
+context previews bound source/output size and point to that reader. Outer failures
+are archived as orchestration diagnostics; scientific/experiment/goal failures
+are tracked independently rather than counting one nested exception twice.
+
+`verify_repair` accepts a failed experiment or scientific observation. Experiments
+must keep dependency names/order and original JSON parameters, edit a source
+revision, then replay the host-retained original checks. A scientific failure
+replays its entire original source after explicitly supplied candidate definitions.
+It cannot silently rewrite away the failing path: self-contained inline errors may
+need a separately recorded reproduction experiment. Only a current checked replay
+on identical dataset scope/bytes can resolve that failure and its failed descendants.
+Unrelated successful cells, source edits and successful definition loading cannot.
+
+`verify_goal` separately recomputes a current experiment with an explicit named
+criterion and assertion checks. Passing verifies that supplied criterion, not all
+possible scientific claims; goal checks cannot resolve earlier failures or publish
+artifacts. Failed goal evidence stays visible. This implementation does not infer
+semantic equivalence of arbitrary edited Python programs or guarantee that model
+written checks express the user's entire intention.
+
+Read-only candidate reflection receives a frozen `execution_evidence` argument
+from the same supervisor context used by the main CodeAct loop, including unresolved
+failures, original-path verification and goal checks. Reflection can read observations
+but cannot execute verification, mutate source or publish. Deterministic model
+regressions inspect the actual next request; real-provider smoke results are reported
+separately, never substituted for transport or state-semantic regressions.
