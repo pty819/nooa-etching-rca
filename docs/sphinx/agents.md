@@ -22,17 +22,21 @@ CodeActV2沿用NOOA代码执行、事件、配置校验与工具机制。项目�
 | `review` | PredictStrategy | 审查给定报告和已复算证据，不独立运行实验 |
 | `inspect_candidate` | 项目封装原生Reflexion | 只读局部实验；具体状态和原生判词单独返回 |
 
-研究策略默认没有固定总迭代数，但受整轮超时、模型次数/token预算、重复调用保护和单元超时约束。领域校验允许三次重试；这是执行/返回纠错次数，不是无限研究授权。最终审查最多两次定向修订，与这个重试计数不同。
+研究策略默认 `max_research_iterations=64`；局部反思基础策略为 6 次迭代，均还受整轮超时、模型次数/token预算、重复调用保护和单元超时约束。领域校验允许三次重试；这是执行/返回纠错次数，不是无限研究授权。最终审查最多两次定向修订，与这个重试计数不同。
 
 ## 公开工具
 
 | 工具 | 输入与输出语义 |
 |---|---|
-| `run_code(code, timeout_s)` | 在持久科学worker执行任意Python；返回ok、输出、耗时等，并保存实际代码 |
+| `run_code(code, timeout_s)` | 在当前研究轮的持久科学worker执行Python；返回状态、输出、epoch和宿主观察ID |
+| `code_write`, `code_edit`, `code_read`, `code_list`, `code_run` | 版本化源码、CAS编辑、精确revision执行；编辑本身不改变内存 |
+| `code_experiment`, `code_read_experiment`, `code_publish` | 显式依赖/参数和冻结输入的独立实验，检查后显式发布当前产物 |
+| `read_observation`, `verify_repair`, `verify_goal` | 读父子执行证据、重放原失败路径、分别验具名目标；不能混同成功状态 |
+| `list_executions`, `read_execution` | 读取科学执行来源、原始源码及有界输出，不重新运行计算 |
 | `write_file(path, content)` | 只写workspace内文本/源码；PNG等二进制应在科学代码里保存 |
 | `run_script(path, args, timeout_s)` | 运行已保存Python脚本，参数按字面传递，检查退出码 |
 | `list_artifacts`, `read_artifact` | 列出真实产物或读取有界文本；不是凭空声明文件存在 |
-| `reply(message_id, brief, image_paths, table_paths)` | 给出精确事实和局限，独立无工具正文请求流式输出中文Markdown |
+| `reply(message_id, brief, image_paths, table_paths)` | 显式提供精确Markdown，宿主原样分段发送；不再调用第二个写作模型 |
 | `spawn_research`, `list_research`, `wait_research` | 动态拆分问题、查询和等待独立方向 |
 | `read_branch_result`, `guide_research` | 读取当前mission对应结果，或投递保留来源的父任务指导 |
 | `cancel_research`, `resume_research` | 取消独立分支或用新mission显式恢复同一方向 |
@@ -81,7 +85,7 @@ TokenBudgetSummarizer保留最近10条事件，目标摘要约8000字符。27200
 
 ## 中文交接的现状
 
-阶段性 `reply` 由agent主动调用；每次内部计算自动留日志，但不自动生成一篇长报告。候选报告有假设、数学证据、替代解释与反证，正式研究最终正文经独立撰写器整理，撰写器无工具且不得增加数字或改变证据等级。纯可视化intent只做基础检查后直接交付；含假设或公式比较时不能走该快速出口。正文失败会交付已保存报告，并单独记录delivery_status，不重复研究。
+阶段性 `reply` 由agent主动提供Markdown；每次内部计算自动留记录，但不自动生成一篇长报告。候选报告保留假设、数学证据、替代解释与反证，最终正文由宿主从结构化结果和已核验事实确定性渲染。`StreamingReplyWriter` 仅保留兼容名称，不再发起第二次模型写作请求。纯可视化intent只做基础检查后直接交付；含假设或公式比较时不能走该快速出口。正文失败会交付已保存报告，并单独记录delivery_status，不重复研究。
 
 尚未将“每次改算必须列传感器全名、step、旧值、新值、修改原因、结论变化”全部变成硬字段。传感器与特征名目前可包含在报告和证据中，但详细程度存在模型自由度。此缺口在[文档自审](quality.md)列为后续工作，不能用prompt要求代替已实现schema。
 
@@ -97,3 +101,9 @@ CodeAct用inspect_dataset探索schema，用任意Python生成划分/合并/变�
 共享token账本按请求内容和配置输出上限预留，并保留未知请求的保守回退；272k上下文、50k输出、thinking/effort及原生摘要阈值保持既有配置。修订次数耗尽显示revision_limit，预算耗尽显示budget_exhausted，两者不能混写。
 
 工具说明明确了DATASET/DATASET_ID也注入run_script，执行文本返回字段为output；EvidenceRef.run_ids只能填写数据集中的真实样本身份，数据集级计数可留空。reply.message_id是自行选择的稳定发布键。未知契约要求先读文档或做小步调用，减少在执行前猜测接口与长篇预演。
+
+## 执行反馈与源代码纠偏
+
+工具表是按用途的摘要，完整参数和当前源码说明见[自动生成工具契约](_generated/tools.md)。`execution_state` 动态块同时包含主内核状态、独立实验的 current/stale 摘要和宿主未解决失败。错误上下文以 observation ID 读取完整记录，不依靠模型回忆几句报错。
+
+源码编辑、执行、原路径复验和目标断言是不同状态；`verify_repair` 不是把“新函数定义成功”直接记为修复，`verify_goal` 也不替代报告的物理/统计门禁。局部反思接收同一证据快照但只能读。运行边界和完整流程见[持续REPL与纠错闭环](repl-runtime.md)。

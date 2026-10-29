@@ -1,4 +1,21 @@
-验证日期：2026-10-18。本地Python3.12与macOS受限执行后端；文档环境Python3.13。以下为审核修复后的执行记录，历史数据和旧报告没有被覆盖。
+## 当前版本验收：2026-10-29
+
+| 检查 | 实际结果与范围 |
+|---|---|
+| 代码与依赖 | 三阶段改造PR #10–#12已合并；独立NOOA升级PR #13精确验收提交 `358c710`，合并 `f5b8d96`；NOOA `0.0.11.dev473` / `bff0ef4` |
+| 平台与锁文件 | 82 x86_64 Linux，CPython 3.12.15；`uv lock --check`、冻结安装与doctor通过 |
+| Python全量 | 186 passed、1 skipped，372.57秒；对应上述精确验收提交 |
+| 强制bubblewrap | 42 passed，45.19秒；含持续REPL、版本编辑、实验隔离、执行反馈和纠错复验 |
+| 真实模型 | MiniMax-M3.1-Flash-Preview通过正式预算客户端完成修改→原路径复验→具名目标检查；修复关系1、通过目标1、未解决失败0 |
+| 格式与警告 | Ruff和格式检查通过；全套77条警告包含上游Pydantic/依赖及一条asyncio subprocess析构警告，不据此断言由本次升级引入 |
+| 未覆盖项 | 未新增Mac/ARM或前端回测、未做完整多场景RCA盲评、未重启研究服务部署 |
+| 发布机制 | Runtime checks已按维护决定停用；docs.yml仍执行严格Sphinx构建、图/链接/搜索检查及Pages发布，二者分开管理 |
+
+公开验收摘要与精确版本见 [PR #13](https://github.com/pty819/nooa-etching-rca/pull/13)。原始研究输入、模型凭据和私有运行数据库不发布；本表是从实测结果人工整理的版本化记录，构建Sphinx本身不会重跑这些研究测试。
+
+## 历史验收快照（不代表当前平台覆盖）
+
+历史验证日期：2026-10-18。本地Python3.12与macOS受限执行后端；文档环境Python3.13。以下为审核修复后的执行记录，历史数据和旧报告没有被覆盖。
 
 | 检查 | 实际结果与范围 |
 |---|---|
@@ -22,8 +39,8 @@
 | 文档 | 严格Sphinx构建、24张实际Mermaid SVG、中文索引执行与站内资源/链接检查通过；具体数量随源码生成索引改变 |
 | 浏览器 | 实际重新载入本地服务，核对受限检查点、原始输入重算等级、收尾评估入口及非强制说明 |
 
-Runtime checks新增Ubuntu24.04与macOS15的真实pytest，以及Node24前端测试、构建与审计。此处本地结果不能替代远端平台验收；最新状态以[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)和[文档发布](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)的对应提交为准。
+Runtime checks新增Ubuntu24.04与macOS15的真实pytest，以及Node24前端测试、构建与审计。此处本地结果不能替代远端平台验收；当时状态见[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)和[文档发布](https://github.com/pty819/nooa-etching-rca/actions/workflows/docs.yml)的对应提交为准。
 
 历史验收提交`5a0603b`的[Runtime checks 39138352863](https://github.com/pty819/nooa-etching-rca/actions/runs/39138352863)曾全部success（各104通过）。
 
-2026-10-19 sandbox hardening 复核后：本地与 CI 口径为 **123 passed / 0 failed**（含 symlink/reap/seccomp/领域包回归）；以当前 `main`/PR 对应的[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)为准，不再把文档数字钉在`5a0603b`。
+2026-10-19 sandbox hardening 复核后：本地与 CI 口径为 **123 passed / 0 failed**（含 symlink/reap/seccomp/领域包回归）；此为当时 `main`/PR 对应的[Runtime checks](https://github.com/pty819/nooa-etching-rca/actions/workflows/tests.yml)的历史记录；不代表dev473又复跑了这些平台。

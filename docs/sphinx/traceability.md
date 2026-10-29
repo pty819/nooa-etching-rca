@@ -18,9 +18,11 @@
 | R12 | rounds修订、SQLite快照、web恢复 | test_web_recovery.py、test_orchestration.py | 文件和事件可恢复；内存变量不恢复、非exactly-once |
 | R13 | docs/sphinx、docs.yml、check_docs.py | 严格构建与站点检查 | 公开文档与源仓；不是线上研究服务 |
 | R14 | formula_models.py、formula_lab.py、formula_runner.py、FormulaStudies.vue | test_formula_lab.py、formulas.test.ts | 任意Python标量特征、四类固定模型与强制交接；不是任意模型、因果证明或独立最终测试 |
-
 | R15 | datasets.py、dataset_adapter.py、dataset_api.py、DatasetPanel.vue | test_datasets.py、datasets.test.ts | 版本/血缘/嵌套/恢复/分支与本地导入；实际外部拉数和KG未接入 |
 | R16 | feature_execution.py、feature_runner.py、artifact_store.py、review_pipeline.py | test_learned_features.py、test_multimodal_features.py、test_audit_regressions.py | 逐对象/折内隔离与可恢复交付；任意代码语义与因果仍需核验 |
+| R17 | persistent_kernel.py、session_cell.py、secure_codeact.py、code_buffers.py | test_persistent_sessions.py、test_code_buffers.py | 活对象只在当前生命周期；编译错误保留、运行失败失效，编辑不执行 |
+| R18 | code_experiments.py、execution_provenance.py | test_code_experiments.py | 精确依赖/参数、失败隔离、显式发布与stale拒绝；不推断任意对象依赖 |
+| R19 | execution_observations.py、autoresearch_agent.py、research_context.py | test_execution_correction.py、test_execution_feedback.py | 父子证据、原路径复验和具名目标分开；反思只读，不认证任意科学结论 |
 
 ## 八项NOOA能力的具体组合
 

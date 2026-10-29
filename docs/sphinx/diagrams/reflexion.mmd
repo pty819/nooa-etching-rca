@@ -3,11 +3,11 @@ sequenceDiagram
   participant R as 局部Reflexion
   participant C as CodeActV2基础策略
   participant E as 已保存证据
-  A->>R: inspect_candidate候选
+  A->>R: 候选与宿主execution_evidence快照
   R->>R: 开启只读副作用限制
   loop 最多两次基础执行
     R->>C: execute_nested
-    C->>E: 只读文本证据
+    C->>E: 只读产物与read_observation
     E-->>C: 实际内容与截断信息
     C-->>R: CandidateAssessment
     R->>R: 原生反思判词并保存

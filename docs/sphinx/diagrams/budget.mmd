@@ -1,5 +1,5 @@
 flowchart TB
-  R[主研究、分支、摘要、审查、正文] --> L[SQLite原子预留token]
+  R[主研究、分支、摘要、审查与反思] --> L[SQLite原子预留token]
   L -->|不能预留| STOP[明确预算耗尽并保存已有结果]
   L -->|预留成功| B[原生Broker获得请求许可]
   B -->|派发前拒绝| Z[撤回token预留，费用为零]

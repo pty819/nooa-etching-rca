@@ -25,15 +25,17 @@
 | 编排 | `autoresearch.py`, `research_branches.py` | 本轮对象组合、上下文恢复、分支生命周期、最终发布 |
 | 研究 | `autoresearch_agent.py`, `strategy_factory.py` | 公开研究方法、工具、V2/审查/反思策略 |
 | 证据 | `research_models.py`, `evidence.py`, `review_pipeline.py` | 输出契约、确定性检查、审查与不可变修订 |
-| 执行 | `research_workspace.py`, `research_worker.py` | 持久科学解释器、限制、超时、stdout/stderr与错误 |
+| 执行 | `secure_codeact.py`, `research_workspace.py`, `persistent_kernel.py`, `session_cell.py` | 无凭据外层/科学长驻内核、精确编译、失败失效和输出采集 |
+| 源码与实验 | `code_buffers.py`, `code_experiments.py` | 精确revision、冻结输入实验、检查与显式产物发布 |
+| 执行观察 | `execution_observations.py`, `execution_provenance.py` | 父子观察、输入/源码/产物来源、原路径复验和目标检查 |
 | 请求 | `runtime.py`, `budget.py`, `provider_stream.py` | 模型配置、原生准入、token账本、真实流观察 |
 | 数据 | `etch_recipe.py`, `etch_model.py`, `etch_chemistry.py`, `etch_features.py` | 固定工艺、降阶动力学、原始观测及派生特征 |
 
-NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManager、QueueManager及AdmissionBroker。项目补的是设备场景知识、证据schema、进程和文件边界、跨进程状态桥接、UI身份与交付语义。没有另写一套通用agent运行时。
+NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManager、QueueManager及AdmissionBroker。项目补的是设备场景知识、证据schema、进程和文件边界、跨进程工具与执行证据桥接、UI身份与交付语义。没有另写一套通用agent运行时。
 
 ## 一轮任务的数据与控制流
 
-入口先核对会话，建立本轮共享预算、公开工具和独立工作区；恢复NOOA快照后重新安装运行态对象、技能与上下文。模型生成的外层 `python_cell` 调用应用公开方法。真正的数据计算进入 `run_code` 或 `write_file` + `run_script`，在那里使用只读`DATASET`、`DATASET_ID`与`artifacts/`；切换数据范围会重建worker，旧变量不再复用。
+入口先核对会话，建立本轮共享预算、公开工具和独立工作区；恢复NOOA快照后重新安装运行态对象、技能与上下文。模型生成的外层 `python_cell` 调用应用公开方法。数据查看和连续计算可用 `run_code` / `code_run`；版本候选和公式试错可用 `code_experiment`，保存的脚本可用 `write_file` + `run_script`。科学环境使用只读 `DATASET`、`DATASET_ID` 与各自可写目录；切换数据范围会重建主科学内核，旧变量不再复用。实验先在暂存目录检查，再由宿主显式发布。
 
 候选返回后，应用先核验并冻结证据，再调用原生Predict审查。需要时进入 `revise`，保留每次旧结果。最终结构化答复、审查结果和Markdown先保存，之后原样分段推送规范Markdown。纯可视化通过文件/数值检查后直接交付，不强制科学审查。正文推送失败时保留规范报告及交付状态，不再调用模型重写。
 
@@ -41,11 +43,13 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 
 外层NOOA执行环境负责调用公开工具与调度；它的cwd不等于研究workspace。在外层直接 `open('artifacts/...')` 或 `savefig` 可能写到错误位置。科学worker是持久Python进程，cwd才是本方向workspace，可读取本方向选中的不可变数据版本，且不继承API凭据。
 
-`run_code`调用之间可复用该worker中的变量；退出、超时或恢复会重建worker，内存数组不会自动恢复。`run_script`启动脚本子进程，不能假定它与交互解释器共享Python变量。恢复依赖脚本、文件和NOOA事件，而不是隐式内存快照。
+同一生成调用的外层 cell 保留自己的 namespace 和事件循环；主科学 `run_code` / `code_run` 则在当前研究轮的另一个内核中复用活对象。二者不直接共享Python对象。编译失败保留原内存，运行异常、超时、取消、崩溃或清理失败使受影响内核失效。新请求和数据切换也不恢复旧活对象。
+
+`run_script` 使用独立临时内核；`code_experiment` 从显式源码revision、JSON参数与冻结输入建立另一个可丢弃worker。其失败不清空主科学内存，也不能覆盖正式产物。源码版本、执行来源、父子观察、修复关系跨轮保留，继续计算必须显式重建所需输入，不隐式重放副作用。
 
 ## 状态为什么分开保存
 
-`conversation.sqlite`保存NOOA事件和快照；根 `ui.sqlite`保存浏览器可重放事件、inbox与请求ID；`branches.sqlite`保存任务注册与生命周期；`budget.sqlite`保存本轮token预留和结算；`.datasets/registry.sqlite`保存不可变数据定义和方向独立的选择栈；`.formula-lab/registry.sqlite`保存公式版本及试验。它们是不同职责的持久层，不是一个跨数据库原子事务。
+`conversation.sqlite`保存NOOA事件和快照；根 `ui.sqlite`保存浏览器可重放事件、inbox与请求ID；`branches.sqlite`保存任务注册与生命周期；`budget.sqlite`保存本轮token预留和结算；`.datasets/registry.sqlite`保存不可变数据定义和方向独立的选择栈；`.formula-lab/registry.sqlite`保存公式版本及试验。此外，`.execution/code.sqlite` 保存源码revision，`ledger.sqlite` 记录科学来源，`experiments.sqlite` 保存实验manifest，`observations.sqlite` 保存跨层观察及修复关系。它们是不同职责的持久层，不是一个跨数据库原子事务。
 
 因此系统承诺可恢复文件与可追溯状态，**不承诺强杀时所有副作用exactly-once**。进程身份核对、mission匹配、旧报告过滤和显式恢复用于降低误关联风险；运行日志仍需保留来解释崩溃边界。
 
@@ -59,4 +63,4 @@ NOOA提供CodeActV2、Predict/Reflexion、Context/TextSkill、SQLiteStorageManag
 
 ## 审核后的执行与交付路径
 
-可信主进程仅持有NOOA编排、模型客户端、预算和明确工具实现。模型生成的外层CodeAct经JSON代理在新进程运行，科学Python另开新进程；二者均不继承live agent。宿主以实际退出码和私有账本归属计算证据。只读Predict reviewer可使用另一已配置模型，全部请求仍受同一预算约束。最终Markdown由核验结果确定性渲染与推送。留出test/仿真参考仅由单独收尾入口评分。细节与测试映射见[审核问题修复](audit-remediation.md)。
+可信主进程仅持有NOOA编排、模型客户端、预算和明确工具实现。模型生成的外层CodeAct经JSON代理进入本次生成调用的无凭据长驻进程；科学Python进入当前研究轮的另一个长驻内核，脚本和独立实验例外。二者均不继承live agent。宿主核对完成协议、实际退出状态、来源账本和父子观察，不能仅因进程持续或返回零就证明科学正确。只读Predict reviewer可使用另一已配置模型，全部请求仍受同一预算约束。最终Markdown由核验结果确定性渲染与推送。留出test/仿真参考仅由单独收尾入口评分。细节与测试映射见[审核问题修复](audit-remediation.md)。

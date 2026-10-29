@@ -19,7 +19,11 @@
 | 审计失败计数与finally异常覆盖 | 结构化script退出码，审计失败另存且保留原异常 | test_reliability_cleanup |
 | 个人取key脚本、额外内部ID头 | 从公共核心删除；本地配置与共享预算保留 | 代码与发布范围检查 |
 | 旧入口混淆、错误噪声注释 | legacy显式命名空间；research默认现代流程；注释明确时间相关噪声 | test_research、test_runtime |
-| 开发依赖漏洞、CI只构建文档 | 更新锁定依赖；Linux/macOS pytest和前端测试/构建/审计工作流 | Runtime checks、npm audit |
+| 开发依赖漏洞、历史CI只构建文档 | 锁定依赖与历史平台/前端工作流；当前Runtime checks停用，82执行运行验收，文档发布保持启用 | 验证章节、npm audit |
+
+## 近期执行与纠错改造
+
+旧的逐cell销毁再反序列化状态无法保留活对象语义，零散报错也不足以支持后续纠偏。PR #10–#12分别补齐长驻内核与失败失效、独立版本实验与产物有效性、持久父子观察与原路径复验；PR #13将NOOA单独升级为dev473。新机制见[执行运行协议](repl-runtime.md)，测试入口为 `test_persistent_sessions.py`、`test_code_buffers.py`、`test_code_experiments.py`、`test_execution_feedback.py`、`test_execution_correction.py`。这些测试和真实MiniMax限定验收证明协议与一个纠错样例，不构成完整RCA准确率保证。
 
 ## 留出评估与对照场景
 

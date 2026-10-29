@@ -11,12 +11,18 @@
 
 ## 当前回归测试
 
-在文档编写前的本地macOS基线中，50项Python与6项Vue测试通过，TypeScript、Vite和Ruff通过。该数字是**历史基线快照**，不是永久不变的测试总量；本次公开发布的最新复跑结果记录于[自审记录](quality.md)。上游Pydantic/LiteLLM弃用警告保留，不为让输出看起来干净而隐藏。
+当前运行验收基线是2026-10-29的NOOA `dev473` 升级提交 `358c710`（合并为 `f5b8d96`），在82 x86_64 Linux、CPython 3.12.15上完成。锁文件检查、冻结安装、doctor、Ruff和格式检查通过；全量 **186 passed / 1 skipped**，强制bubblewrap专项 **42 passed**。本次没有新增Mac或ARM回测，也没有把测试目录当作研究服务部署。按维护决定，GitHub Runtime checks已停用，Sphinx文档构建与Pages发布仍启用。
+
+这些是该精确版本的验收快照，不是永久测试总数。历史macOS的50项Python、6项Vue，以及后续104/123项回归记录仍保留在[自审记录](quality.md)，不能冒充当前版本新增平台覆盖。上游弃用和子进程析构警告如实记录，不通过屏蔽警告制造干净输出。
 
 | 测试文件 | 主要覆盖 |
 |---|---|
 | test_etching.py | 波形可复现、固定recipe、隐藏状态不进观测、物理代理与特征检查 |
 | test_research.py | 旧评估器的训练/开发边界、因子合法性、预算与冻结 |
+| test_persistent_sessions.py、test_process_cleanup.py | 活对象、函数重定义、语法/运行异常、取消/超时/崩溃、子进程清理 |
+| test_code_buffers.py | 精确revision、CAS编辑、虚拟源码追踪、原生工具代理 |
+| test_code_experiments.py | 独立实验、参数/依赖、main不污染、stale、篡改拒绝与发布 |
+| test_execution_feedback.py、test_execution_correction.py | 有界输出、父子观察进实际下一轮请求、原路径复验、目标检查和只读反思 |
 | test_autoresearch.py | 通用代码、会话恢复、失败/超时、讨论限制和worker边界 |
 | test_runtime.py | 真实NOOA/SDK请求构造，50k输出、thinking/effort与本地窗口 |
 | test_streaming.py | UTF-8增量、工具参数不泄露、附件限定、SSE、幂等、指导和停止 |
@@ -27,11 +33,19 @@
 | test_scientific_stack.py | 实际隔离worker里计算SciPy峰值、sklearn PCA、statsmodels回归、aeon DTW与三维归一化；验证JIT缓存和真实图表落盘 |
 | frontend/tests/workspace.test.ts | Vue消息、Unicode重放、身份隔离、指导、审查、预算和图片路径 |
 
-集成测试使用确定性模型服务，但运行真实SDK、HTTP与科学worker/子进程，不能称为“只有mock函数”。同样，它们也不是对真实GLM的随机输出质量保证。Linux已有Landlock/seccomp后端；必须以Runtime checks的实际Linux测试为准，不能把文档CI通过解释为运行验收。
+集成测试使用确定性模型服务，但运行真实SDK、HTTP与科学worker/子进程，不能称为“只有mock函数”。同样，它们也不是对真实GLM的随机输出质量保证。Linux后端的运行保证依据具体提交的真实回归；当前用上述82记录，历史Runtime checks只能证明其当时提交。文档CI通过不能解释为运行验收。
 
 扩展分析库后的回归还检查实际NOOA请求上下文包含这些科学库，避免只是把库装在宿主上却没有告诉agent。库栈测试验证代表性计算可执行，不声称所有可选extras和算法都已经验收。
 
-## 真实GLM限定任务验收
+## 真实MiniMax纠错限定验收（2026-10-29）
+
+在相同dev473精确提交上，预先用真实隔离worker记录除零失败的 `score` 实验，再让 `MiniMax-M3.1-Flash-Preview` 根据宿主源码与失败观察修改revision，调用 `verify_repair` 重放原checks，并用 `verify_goal` 单独验 `score(2)==4`。宿主实际记录1条原失败修复关系、1项目标通过，未解决失败为0；不是只根据模型回复文字判断。
+
+首次外置验收脚本直接使用裸客户端，漏接正式 `MissionBudget.client`，使NOOA内部 `prompt_cache_key` 进入MiniMax的Anthropic路由并被拒绝；当时模型没有进入纠错步骤。脚本改用正式 `BudgetedClient` 调用链后通过，项目代码不因此放宽供应商参数检查。该失败与修正属于验收入口记录，不应混报为Python回归失败或新版科学能力已失效。
+
+确定性脚本模型验证上下文确实送达；这次真实模型验证选定任务能走通；二者都不能证明复杂公式、任意模型或完整RCA效果会同样成功。真实请求需要私有配置，不能成为公共文档构建依赖。
+
+## 真实GLM历史限定任务验收
 
 一次真实接口验收派生两条独立方向，分别统计公开发现集的目标腔和参考腔run数量。两分支均完成并通过各自审查，实际模型并发峰值为2。第一轮主任务因保守token预留不足而结束，分支结果保留；第二轮复用原分支，完成合并、一次定向修订和PNG/CSV交付。
 

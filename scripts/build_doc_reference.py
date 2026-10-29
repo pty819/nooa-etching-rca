@@ -49,6 +49,54 @@ def generate():
                         modules.append("  公开方法：" + "、".join(f"`{x}`" for x in methods) + "。")
         modules.append("")
     (OUT / "modules.md").write_text("\n".join(modules) + "\n")
+    # Extract only the actually declared CodeAct capability surface, without
+    # importing the runtime or private provider configuration.
+    secure = ast.parse((ROOT / "src/factor_demo/secure_codeact.py").read_text())
+    declared = next(
+        node.value
+        for node in secure.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "TOOLS" for t in node.targets)
+    )
+    tool_names = set(ast.literal_eval(declared.args[0]))
+    agent_tree = ast.parse((ROOT / "src/factor_demo/autoresearch_agent.py").read_text())
+    agent = next(
+        node
+        for node in agent_tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "AutoresearchAgent"
+    )
+    tool_lines = [
+        "# CodeAct实际工具契约",
+        "",
+        "本页从宿主TOOLS白名单和AutoresearchAgent的AST生成；不导入运行时，不读取凭据。参数与说明跟随构建提交，领域与只读权限仍由宿主实际检查。",
+        "",
+        "说明中的checked/verified只表达各自检查口径，不构成任意科学结论认证。工具分组与使用流程见[agent设计](../agents.md)和[执行运行协议](../repl-runtime.md)。",
+        "",
+    ]
+    for item in agent.body:
+        if (
+            not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            or item.name not in tool_names
+        ):
+            continue
+        args = ast.unparse(item.args)
+        if args.startswith("self, "):
+            args = args[6:]
+        elif args == "self":
+            args = ""
+        tool_lines += [
+            f"## {item.name}",
+            "",
+            f"[实现与权限检查]({source('src/factor_demo/autoresearch_agent.py', item.lineno)})",
+            "",
+            "```python",
+            f"{item.name}({args})",
+            "```",
+            "",
+            (ast.get_docstring(item) or "项目工具。").replace("\n", " "),
+            "",
+        ]
+    (OUT / "tools.md").write_text("\n".join(tool_lines))
     lines = [
         "# 实际配置与结构化契约",
         "",
@@ -68,6 +116,7 @@ def generate():
         ]
     lock = tomllib.loads((ROOT / "uv.lock").read_text())
     stack = [
+        "nooa",
         "polars",
         "numpy",
         "scipy",
