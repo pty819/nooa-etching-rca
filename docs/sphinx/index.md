@@ -32,7 +32,7 @@
 | 前端 | Vue 3、TypeScript、Vite；持久SSE、Markdown、PNG与CSV表格 |
 | 平台 | macOS sandbox-exec；Linux Landlock/bubblewrap与seccomp，缺少机制时拒绝执行 |
 
-NOOA依赖固定在 `1454b78c8f0a85c97eab1c6a91cc8cfc95b34de5`，没有修改上游vendor。研究运行配置为272000总上下文、50000输出上限，自动摘要阈值177600。实际值可在[自动生成的配置参考](_generated/contracts.md)检查。
+NOOA依赖固定在 `bff0ef449f9bd74ddbb19486489f95c0edc73831`，没有修改上游vendor。研究运行配置为272000总上下文、50000输出上限，自动摘要阈值177600。实际值可在[自动生成的配置参考](_generated/contracts.md)检查。
 
 :::{important}
 GitHub Pages发布的是静态设计文档，不是研究服务。仓库不包含API密钥、原始私有对话、已有运行数据库或生成的数据集。公开源码包含仿真方法与故障设定；要进行盲评，研究agent仍只能获得导出的公开发现集，不能获得整个仓库。

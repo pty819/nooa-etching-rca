@@ -2,7 +2,7 @@
 
 ## 实现事实的首要依据
 
-当前仓库源码、版本化配置、依赖锁和测试是实现事实的依据。自动生成的[模块索引](_generated/modules.md)与[配置契约](_generated/contracts.md)连到对应源码。NOOA依赖固定为 [NVIDIA-NeMo/labs-OO-Agents的1454b78提交](https://github.com/NVIDIA-NeMo/labs-OO-Agents/tree/1454b78c8f0a85c97eab1c6a91cc8cfc95b34de5)，其原生策略、存储和控制器机制不归为本项目原创。
+当前仓库源码、版本化配置、依赖锁和测试是实现事实的依据。自动生成的[模块索引](_generated/modules.md)与[配置契约](_generated/contracts.md)连到对应源码。NOOA依赖固定为 [NVIDIA-NeMo/labs-OO-Agents的bff0ef4提交](https://github.com/NVIDIA-NeMo/labs-OO-Agents/tree/bff0ef449f9bd74ddbb19486489f95c0edc73831)，其原生策略、存储和控制器机制不归为本项目原创。
 
 外部资料用于说明机制或方法来源，不替代本项目实际验证。不同来源的适用范围如下。
 

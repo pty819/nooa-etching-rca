@@ -160,7 +160,7 @@ async def _research_turn(
             "provider": provider.name,
             "model": provider.model,
             "base_url": provider.base_url,
-            "nooa_commit": "1454b78c8f0a85c97eab1c6a91cc8cfc95b34de5",
+            "nooa_commit": "bff0ef449f9bd74ddbb19486489f95c0edc73831",
         },
     )
     with (run / "conversation.jsonl").open("a") as out:
