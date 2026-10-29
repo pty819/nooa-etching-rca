@@ -32,7 +32,7 @@
 | 并行 | 主研究动态派生独立分支；默认两个分支活跃 |
 | 预算 | 每轮主/子研究、摘要、审查共用原生AdmissionBroker及token账本 |
 | 前端 | Vue 3、TypeScript、Vite；持久SSE、Markdown、PNG与CSV表格 |
-| 平台 | macOS sandbox-exec；Linux Landlock/bubblewrap与seccomp，缺少机制时拒绝执行 |
+| 平台 | macOS sandbox-exec；Linux优先Landlock/bubblewrap与seccomp，auto可降级process，严格模式拒绝降级 |
 
 NOOA包版本为 `0.0.11.dev473`，依赖固定在 `bff0ef449f9bd74ddbb19486489f95c0edc73831`，没有修改上游vendor。研究运行配置为272000总上下文、50000输出上限，自动摘要阈值177600。实际值可在[自动生成的配置参考](_generated/contracts.md)检查。
 
