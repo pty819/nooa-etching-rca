@@ -461,6 +461,129 @@ class AutoresearchAgent(Agent):
         async with self._workspace.lock:
             return CodeExperiments(self._workspace).publish(experiment_id)
 
+    async def read_observation(
+        self, observation_id: str, offset: int = 0, limit: int = 12000
+    ) -> dict:
+        """Read paginated host execution evidence, including exact source, error and parent ID."""
+        return self._workspace.observations.read(observation_id, offset, limit)
+
+    async def verify_repair(
+        self,
+        failure_id: str,
+        name: str,
+        revision: int,
+        dependencies: dict[str, int] | None = None,
+        parameters: dict | None = None,
+        timeout_s: int = 120,
+    ) -> dict:
+        """Verify a correction against the exact original failed path in a fresh worker.
+
+        For failed experiments the host reuses original checks and JSON parameters;
+        source names/order must match and at least one revision must change. For a
+        scientific cell the entire original source is the replayed check path after
+        explicit new definitions. Self-contained inline errors may need a separate
+        reproduction experiment; this tool never edits away the failing check.
+        Inputs must match the original frozen bytes/scope. Unrelated successful
+        executions cannot resolve failures. Success verifies this path, not all goals.
+        """
+        await self._writable()
+        from .code_experiments import CodeExperiments
+
+        workspace = self._workspace
+        journal = workspace.observations
+        failure = journal.get(failure_id)
+        if failure["status"] != "failed":
+            raise ValueError("Choose an actual failed observation")
+        expected_inputs = failure.get("input_files")
+        expected_dataset = failure.get("dataset_ref")
+        if failure["kind"] == "experiment":
+            original = CodeExperiments(workspace).get(failure["experiment_id"])
+            if [*(dependencies or {}), name] != [src["name"] for src in original["sources"]]:
+                raise ValueError("Repair must preserve the original source dependency names/order")
+            if parameters is not None and parameters != original["parameters"]:
+                raise ValueError("Repair must reuse original parameters")
+            revisions = {**(dependencies or {}), name: revision}
+            if all(revisions[src["name"]] == src["revision"] for src in original["sources"]):
+                raise ValueError("Edit a source revision before verifying repair")
+            checks, parameters = original["checks"], original["parameters"]
+            expected_inputs, expected_dataset = original["input_files"], original["dataset_ref"]
+        elif failure["kind"] == "scientific":
+            checks = failure["code"]
+        else:
+            raise ValueError("Choose a scientific or experiment failure")
+        verified = await self.code_experiment(
+            name, revision, checks, dependencies, parameters, timeout_s
+        )
+        passed = (
+            verified["status"] == "checked"
+            and verified["validity"] == "current"
+            and verified["input_files"] == expected_inputs
+            and verified["dataset_ref"] == expected_dataset
+        )
+        identity = journal.record(
+            "repair",
+            "passed" if passed else "failed",
+            repairs=failure_id,
+            experiment_id=verified["experiment_id"],
+            checks=checks,
+            output="\n".join(r["output"] for r in verified["executions"]),
+        )
+        if passed:
+            journal.resolve(failure_id, identity)
+        return {
+            "observation_id": identity,
+            "status": "verified" if passed else "unverified",
+            "failure_id": failure_id,
+            "experiment_id": verified["experiment_id"],
+            "goal_satisfied": None,
+        }
+
+    async def verify_goal(
+        self, goal: str, experiment_id: str, checks: str, timeout_s: int = 120
+    ) -> dict:
+        """Separately check a stated goal criterion by recomputing a current experiment.
+
+        Reuses exact sources/inputs/parameters; checks must assert the named criterion.
+        Records only this supplied criterion as passed, not independent truth of the
+        entire research task. Does not resolve prior failures or publish artifacts.
+        """
+        await self._writable()
+        from .code_experiments import CodeExperiments
+
+        original = CodeExperiments(self._workspace).get(experiment_id)
+        if not goal.strip() or original["status"] != "checked" or original["validity"] != "current":
+            raise ValueError("Choose a named goal and a current checked experiment")
+        candidate = original["sources"][-1]
+        dependencies = {src["name"]: src["revision"] for src in original["sources"][:-1]}
+        result = await self.code_experiment(
+            candidate["name"],
+            candidate["revision"],
+            checks,
+            dependencies,
+            original["parameters"],
+            timeout_s,
+        )
+        passed = (
+            result["status"] == "checked"
+            and result["validity"] == "current"
+            and result["input_files"] == original["input_files"]
+            and result["dataset_ref"] == original["dataset_ref"]
+        )
+        identity = self._workspace.observations.record(
+            "goal",
+            "passed" if passed else "failed",
+            goal=goal,
+            checks=checks,
+            experiment_id=result["experiment_id"],
+            output="\n".join(r["output"] for r in result["executions"]),
+        )
+        return {
+            "observation_id": identity,
+            "goal": goal,
+            "supplied_criterion_passed": passed,
+            "experiment_id": result["experiment_id"],
+        }
+
     async def write_file(self, path: str, content: str) -> dict:
         """Save ANY text/source file within the research workspace, without running it.
 
@@ -605,7 +728,9 @@ class AutoresearchAgent(Agent):
         ...
 
     @strategy(reflection_strategy(Capabilities()))
-    async def _inspect_candidate(self, candidate: ResearchReply) -> CandidateAssessment:
+    async def _inspect_candidate(
+        self, candidate: ResearchReply, execution_evidence: dict
+    ) -> CandidateAssessment:
         """只读审查候选结果，检查证据一致性、反证和观测边界，返回评估及建议。
         可读现有artifact，不执行研究代码、不写文件、不发消息或派生任务。不是根因认证。
         """
@@ -628,7 +753,9 @@ class AutoresearchAgent(Agent):
         interrupted = None
         try:
             result = await self._inspect_candidate(
-                candidate, _strategy=reflection_strategy(self._policy)
+                candidate,
+                execution_evidence=self._workspace.execution_context(),
+                _strategy=reflection_strategy(self._policy),
             )
         except BaseException as error:  # noqa: BLE001 - persist verdicts on cancellation, then re-raise
             interrupted = error
