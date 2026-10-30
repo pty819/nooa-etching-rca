@@ -4,7 +4,7 @@
 
 本场景需要模型根据中间证据决定下一步，临时编写统计或物理关系代码，并处理执行失败。仅让模型从预定义的几个筛选器中选择，无法覆盖原始曲线检查、估计器实现、批次置换和新因子构造。因此主研究使用原生CodeActV2与通用科学worker，算法自由度保留在研究层。
 
-CodeActV2沿用NOOA代码执行、事件、配置校验与工具机制。项目没有把旧版CodeActStrategy换一个名字，也没有使用自行解析Markdown代码块代替原生调用。方法可用 `_strategy=` 按本轮有效策略覆盖，避免通过修改共享策略对象影响同时运行的其他方法。
+CodeActV2沿用NOOA代码执行、事件、配置校验与工具机制。外层现直接使用标准CodeActV2和SandboxedExecutor，能力探测只产生SandboxConfig；没有自行解析Markdown或替换REPL协议。方法可用 `_strategy=` 按本轮有效策略覆盖，避免通过修改共享策略对象影响同时运行的其他方法。
 
 ```{mermaid} diagrams/agent-loop.mmd
 :caption: 主研究循环。确定性门禁和审查在候选交接处运行，正常科学探索仍由agent自由决定。

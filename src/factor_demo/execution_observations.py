@@ -56,6 +56,13 @@ class ExecutionObservations:
             raise ValueError("Unknown execution observation")
         return json.loads(row[0])
 
+    def children(self, identity):
+        with self.connect() as db:
+            rows = [
+                json.loads(r[0]) for r in db.execute("SELECT doc FROM observations ORDER BY rowid")
+            ]
+        return [row for row in rows if row.get("parent_id") == identity]
+
     def resolve(self, failure, verification):
         original, checked = self.get(failure), self.get(verification)
         if (
