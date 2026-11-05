@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
     from ..agent.session import Session
 
 VerificationStatus = Literal["improved", "regressed", "needs_revision", "blocked"]
+
+TERMINAL_VERIFICATION_STATUSES = frozenset({"improved", "regressed", "needs_revision", "blocked"})
+"""verifier 通过 report 形成的四态判词；执行故障和取消不属于此集合。"""
 
 
 def _read(files: WorkspaceFiles, path: str) -> bytes:
@@ -92,6 +96,10 @@ class FeatureAnalyzeVerifier:
         self.pending: list[dict] = []
         self.queue: list[dict] = []
         self.lock = asyncio.Lock()
+        self.wake = asyncio.Event()
+        self._results: dict[str, dict] = {}
+        self.wait_timeout_s = float(os.environ.get("FACTOR_VERIFIER_WAIT_TIMEOUT", "1800"))
+        self._finish_impl = None
         self.checkpoint = "verifier_runs/session.json"
         self.previous_hook = parent.loop.before_completion_hook
         try:
@@ -133,10 +141,13 @@ class FeatureAnalyzeVerifier:
                 instance.files.close()
 
     def register_tools(self, factory: ToolFactory) -> None:
-        """登记非阻塞提交和显式查询入口。"""
+        """登记提交、查询入口，并用 finish 门禁强制执行收尾验收。"""
         factory.register_callable(
             "feature_analyze_verifier", self.submit,
-            description="提交本轮 Notebook 和报告，立即返回；忙碌时排队，当前 report 后自动处理下一份。",
+            description=(
+                "提交本轮 Notebook 和报告。wait=false 立即返回并在后台排队验证；"
+                "wait=true 阻塞等待本次判词后再返回。收尾提交应使用 wait=true。"
+            ),
             recover_validation_errors=True,
         )
         factory.register_callable(
@@ -144,6 +155,10 @@ class FeatureAnalyzeVerifier:
             description="查询当前验证状态和最近 report；wait=true 时等待当前验证及队列完成。",
         )
         factory.add_instructions(RESEARCH_INSTRUCTIONS)
+        try:
+            self._finish_impl = factory.replace("finish", self._guarded_finish)
+        except KeyError:
+            self._finish_impl = None
 
     def _save_control(self) -> None:
         """持久化未完成交接和待送反馈，恢复后不能越过未报告轮次。"""
@@ -151,6 +166,82 @@ class FeatureAnalyzeVerifier:
             "current": self.current, "latest": self.latest, "pending": self.pending,
             "queue": self.queue,
         }, ensure_ascii=False).encode())
+
+    def _notify(self) -> None:
+        """唤醒阻塞等待者；具体是否完成由等待循环重新读取状态判断。"""
+        self.wake.set()
+
+    def _in_flight(self, identity: str) -> bool:
+        """判断某提交仍在当前轮次或队列中，尚未形成判词。"""
+        return (self.current is not None and self.current.get("submission_id") == identity) or any(
+            item["submission_id"] == identity for item in self.queue
+        )
+
+    def _pending_receipt(self, identity: str, reason: str) -> dict:
+        """构造未形成判词的阻塞结果，明确区别于通过验收。"""
+        return {"status": "pending", "submission_id": identity, "accepted": False, "reason": reason}
+
+    async def _guarded_finish(self, **arguments) -> Any:
+        """收尾门禁：验证未完成时先等待，仍无法空闲则拒绝结束本轮。"""
+        if self._busy():
+            await self._wait_until_idle()
+        if self._busy():
+            raise RuntimeError(
+                "还有未完成或未报告的验证提交；请先调用 feature_verifier_status(wait=true) "
+                "等待，或 retry=true 续跑被中断的提交，处理完毕后再 finish 交付最终结果。"
+            )
+        if self._finish_impl is None:
+            raise RuntimeError("finish 实现缺失，无法结束本轮")
+        result = self._finish_impl(**arguments)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
+
+    async def _wait_until_idle(self) -> None:
+        """驱动后台队列直到空闲、无法继续推进或到达等待上限。"""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.wait_timeout_s
+        while self._busy():
+            active = self.task is not None and not self.task.done()
+            if not active and self._unreported():
+                return  # 需显式 retry，本轮不再空等
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            self.wake.clear()
+            if not self._busy():
+                return
+            try:
+                await asyncio.wait_for(self.wake.wait(), remaining)
+            except TimeoutError:
+                return
+
+    async def _wait_for_result(self, identity: str) -> dict:
+        """阻塞等待指定提交形成判词；超时或无法推进时返回 pending 回执。"""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.wait_timeout_s
+        while True:
+            if identity in self._results:
+                return self._results[identity]
+            active = self.task is not None and not self.task.done()
+            if not active:
+                if self._unreported() and (
+                    self.current is None or self.current.get("submission_id") != identity
+                ):
+                    return self._pending_receipt(
+                        identity, "存在未报告的先前提交，需 feature_verifier_status(retry=true) 继续")
+                if not self._in_flight(identity):
+                    return self._pending_receipt(identity, "验证任务结束但未形成判词，可能被中断")
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return self._pending_receipt(identity, "等待验证超时，验证仍在进行")
+            self.wake.clear()
+            if identity in self._results:
+                return self._results[identity]
+            try:
+                await asyncio.wait_for(self.wake.wait(), remaining)
+            except TimeoutError:
+                return self._pending_receipt(identity, "等待验证超时，验证仍在进行")
 
     async def deliver_feedback(self) -> None:
         """仅在完整工具批次之间向研究上下文注入已完成反馈。"""
@@ -213,16 +304,19 @@ class FeatureAnalyzeVerifier:
         self, notebook_name: Annotated[str, Field(min_length=1, max_length=200)],
         report: Annotated[str, Field(min_length=1, max_length=30000)],
         round_id: Annotated[str | None, Field(max_length=200)] = None,
+        wait: bool = False,
     ) -> dict[str, Any]:
-        """冻结输入并持久化入队；不打断当前验证轮次。
+        """冻结输入并持久化入队；可选阻塞到本次判词形成。
 
         Args:
             notebook_name: 当前提交使用的 Notebook 名称。
             report: 研究报告及数据、相关产物的位置。
             round_id: 研究轮次标识，修订时复用；缺省沿用 Notebook 名称。
+            wait: 为 True 时阻塞等待本次验证形成判词再返回；默认立即返回回执。
 
         Returns:
-            submitted 提交回执；等待中的提交由宿主自动投递，不表示验证通过。
+            wait=False 时返回 submitted 回执；wait=True 时返回本次判词（四态之一），
+            或在超时/无法推进时返回 status=pending 的未完成结果。
         """
         async with self.lock:
             snapshot = await self.notebooks.snapshot_notebook(notebook_name)
@@ -238,8 +332,12 @@ class FeatureAnalyzeVerifier:
             self.queue.append(submission)
             self._save_control()
             self._start_worker()
-            return {"status": "submitted", "submission_id": identity,
-                    "round_id": submission["round_id"], "verification_path": folder}
+        receipt = {"status": "submitted", "submission_id": identity,
+                   "round_id": submission["round_id"], "verification_path": folder}
+        self._notify()
+        if not wait:
+            return receipt
+        return await self._wait_for_result(identity)
 
     def report(
         self, status: VerificationStatus,
@@ -263,8 +361,10 @@ class FeatureAnalyzeVerifier:
         _write(self.files, f"{self.current['verification_path']}/result.json",
                json.dumps(result, ensure_ascii=False, indent=2).encode())
         self.latest = result
+        self._results[result["submission_id"]] = result
         self.pending.append(result)
         self._save_control()
+        self._notify()
         return result
 
     async def _verify(self, submission: dict) -> None:
@@ -284,6 +384,7 @@ class FeatureAnalyzeVerifier:
         except asyncio.CancelledError:
             self.latest = {"status": "cancelled", "verification_path": folder,
                            "submission_id": submission["submission_id"]}
+            self._results[submission["submission_id"]] = self.latest
             _write(self.files, f"{folder}/execution_status.json",
                    json.dumps(self.latest, ensure_ascii=False).encode())
             raise
@@ -291,6 +392,7 @@ class FeatureAnalyzeVerifier:
             self.latest = {"status": "error", "reason": str(error)[:1000],
                            "verification_path": folder,
                            "submission_id": submission["submission_id"]}
+            self._results[submission["submission_id"]] = self.latest
             self.pending.append(self.latest)
             _write(self.files, f"{folder}/execution_status.json",
                    json.dumps(self.latest, ensure_ascii=False).encode())
@@ -300,14 +402,14 @@ class FeatureAnalyzeVerifier:
                 _write(self.files, self.checkpoint, self.child.state.model_dump_json().encode())
                 _write(self.files, f"{folder}/session.json",
                        self.child.state.model_dump_json().encode())
+            self._notify()
 
     def _unreported(self) -> bool:
         """未报告的当前提交占住队首，执行错误不能跳过。"""
         return (self.current is not None and (
             self.latest is None
             or self.latest.get("submission_id") != self.current["submission_id"]
-            or self.latest.get("status") not in {
-                "improved", "regressed", "needs_revision", "blocked"}))
+            or self.latest.get("status") not in TERMINAL_VERIFICATION_STATUSES))
 
     def _busy(self) -> bool:
         """同时反映运行、待恢复提交及等待队列。"""
@@ -329,12 +431,14 @@ class FeatureAnalyzeVerifier:
             async with self.lock:
                 if not self._unreported():
                     if not self.queue:
+                        self._notify()
                         return
                     self.current = self.queue.pop(0)
                     self._save_control()
                 submission = self.current
             await self._verify(submission)
             if self._unreported():
+                self._notify()
                 return
 
     async def status(self, wait: bool = False, retry: bool = False) -> dict:

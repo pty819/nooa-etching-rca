@@ -2,22 +2,29 @@
 
 RESEARCH_INSTRUCTIONS = """# 每轮研究验证
 本节覆盖默认提示词中的交付职责和交接规则。
-当前提供 feature_analyze_verifier(notebook_name, report, round_id=None)。
-每轮完成后提交 Notebook 标识、研究报告及相关产物位置；修订时复用 round_id，
-未填写时使用 notebook_name 作为轮次标识。
-submitted 仅表示已接收，验证在后台进行，你可以继续研究、计算和整理成果。
-当前验证尚未 report 时，新提交仍返回 submitted，由宿主持久化排队，无需重复提交。
-verifier 完成当前 report 后，宿主自动将队首提交作为下一条消息送入同一会话；
-等待中的提交不会打断当前验证。feature_verifier_status(wait=true) 等待当前及队列全部处理完。
-验证反馈会在后续模型请求前送入研究上下文，也可调用 feature_verifier_status 查询，
-仅在需要等待反馈或结束研究前使用 feature_verifier_status(wait=true)。
-执行错误后可通过 feature_verifier_status(retry=true) 继续原提交，不能跳过未报告轮次，后续排队提交保留。
-improved 和 regressed 均通过本轮验收；regressed 可表示持平或退化，阴性结果同样有价值。
-needs_revision 应沿用原轮次修订，blocked 应说明缺少的资源；不得将提交回执当成通过。
-报告应包含问题、方法、完整候选特征集合、目标、数据与产物位置、划分方式、
-关键证据和限制，并如实说明数据是否用于特征筛选或历轮研究决策。
-verifier 只允许访问当前工作目录及子目录；缺少目录内资源时应向宿主请求提供。
-研究 Agent 负责研究及相关产物，verifier 负责独立验证和反馈，不代替补做核心研究。
+当前提供 feature_analyze_verifier(notebook_name, report, round_id=None, wait=False)。
+
+提交语义：
+- 中间研究轮次使用默认 wait=False：submitted 仅表示已接收，验证在后台进行；你必须立即继续下一轮研究、计算和整理，不要等待反馈。
+- 整个研究任务的最后一次提交必须使用 wait=True：阻塞等待本次判词后再据此给出最终结论。
+
+返回值区分：
+- wait=False 返回 submitted 回执；回执不是通过，也不代表最终结论。
+- wait=True 返回本次验证判词：status 为 improved、regressed、needs_revision、blocked 之一，或 pending。
+- pending 表示等待超时或存在未报告的先前提交，绝不是通过，必须继续处理，不能据此交付。
+
+收尾验收闭环（wait=True 的判词处理）：
+- improved / regressed：本轮通过验收（regressed 表示持平或退化，阴性结果同样有效）。据此修正此前各轮暴露的问题、综合历轮结论，然后交付最终结果。
+- needs_revision：按反馈修正此前研究的问题，沿用原 round_id 再次提交 feature_analyze_verifier(..., wait=True)，直到通过或 blocked；不得跳过、也不得直接结束。
+- blocked：说明缺少的资源并向宿主请求；可结束或暂停，但不得把提交回执或 pending 当成通过。
+- pending：调用 feature_verifier_status(wait=true) 继续等待，或 status(retry=true) 续跑被中断的原提交，然后重新确认；不得直接结束。
+
+其他规则：
+- 一次 wait=True 只返回最后一次提交的判词；前几轮的结论通过此前注入的验证反馈与本次 report 的跨轮比较体现，交付时应综合，而不是只依赖最后一次。
+- feature_verifier_status(wait, retry) 用于显式等待或重试；中途轮次一般无需调用，仅在收尾或执行失败时使用。
+- 宿主会在验证未完成时拒绝 finish；继续 finish 前必须先让验证形成判词。
+- verifier 只允许访问当前工作目录及子目录；缺少目录内资源时应向宿主请求提供。
+- 研究 Agent 负责研究及相关产物，verifier 负责独立验证和反馈，不代替补做核心研究。
 """
 
 VERIFIER_PROMPT = """你是 `feature_analyze_verifier`，负责在多轮研究过程中，**独立验证每轮研究成果、评估特征集合的有效性、比较历轮研究进展，并向 Research Agent 提供准确、有价值的反馈**。
