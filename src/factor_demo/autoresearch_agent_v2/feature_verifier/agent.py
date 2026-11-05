@@ -9,6 +9,7 @@ import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
 from uuid import uuid4
 
@@ -284,7 +285,17 @@ class FeatureAnalyzeVerifier:
         child.loop.terminal_tool = "report"
         child.loop.tools.register_callable("report", self.report,
                                            description="完成本轮验证，返回状态和有证据的反馈。")
-        SandboxTools.register(child, config=SandboxConfig(workdir=state.workdir))
+        registration = self.parent.state.datasets.get("DATASET")
+        dataset_reads = ()
+        if registration:
+            data_path = Path(registration.path)
+            if not data_path.is_absolute():
+                data_path = self.parent.state.workdir / data_path
+            if data_path.exists():
+                dataset_reads  = (data_path.resolve(), )
+        SandboxTools.register(
+            child, config=SandboxConfig(workdir=state.workdir, read_paths=dataset_reads)
+        )
         child.register_stateful_tool(FileTools)
         child.register_stateful_tool(NotebookTools)
         self.child = child
