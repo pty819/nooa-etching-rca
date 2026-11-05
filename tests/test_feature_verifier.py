@@ -239,7 +239,7 @@ def test_runtime_medium_is_supported_and_default():
     from factor_demo.runtime import RuntimeSettings
 
     assert RuntimeSettings().reasoning_effort == "medium"
-    assert RuntimeSettings.load(Path("configs/runtime.json")).reasoning_effort == "max"
+    assert RuntimeSettings.load(Path("configs/runtime.json")).reasoning_effort == "medium"
 
 
 def test_close_and_resume_unreported_submission(tmp_path, monkeypatch):

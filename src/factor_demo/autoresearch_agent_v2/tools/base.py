@@ -98,6 +98,25 @@ class ToolFactory:
             "function": {"name": name, "description": description, "parameters": parameters},
         }
 
+    def replace(self, name: str, function: Callable[..., Any]) -> Callable[..., Any]:
+        """替换已注册工具的实现，保留其参数 Schema 和说明。
+
+        Args:
+            name: 已注册的工具名称。
+            function: 新的同步或异步实现，接收与原工具相同的关键字参数。
+
+        Returns:
+            被替换的原始实现，便于包装后仍然调用。
+
+        Raises:
+            KeyError: 工具名称尚未注册。
+        """
+        if name not in self._functions:
+            raise KeyError(name)
+        previous = self._functions[name]
+        self._functions[name] = function
+        return previous
+
     def register_callable(
         self,
         name: str,
