@@ -30,6 +30,9 @@ VerificationStatus = Literal["improved", "regressed", "needs_revision", "blocked
 TERMINAL_VERIFICATION_STATUSES = frozenset({"improved", "regressed", "needs_revision", "blocked"})
 """verifier 通过 report 形成的四态判词；执行故障和取消不属于此集合。"""
 
+_DELIVERABLE_CHUNK = 1 << 20
+"""计算交付产物哈希时的分块大小。"""
+
 
 def _read(files: WorkspaceFiles, path: str) -> bytes:
     """读取受限工作目录中的完整文件，拒绝缺失和符号链接。"""
@@ -213,7 +216,7 @@ class FeatureAnalyzeVerifier:
                 )
         allowed, note = self._acceptance()
         if not allowed:
-            raise RuntimeError(self._finish_rejection())
+            raise RuntimeError(note or self._finish_rejection())
         if self._finish_impl is None:
             raise RuntimeError("finish 实现缺失，无法结束本轮")
         result = self._finish_impl(**arguments)
@@ -224,11 +227,22 @@ class FeatureAnalyzeVerifier:
         return result
 
     def _acceptance(self) -> tuple[bool, str]:
-        """判断研究会话能否收尾，返回 (是否允许, 未验证标记)。"""
+        """判断研究会话能否收尾，返回 (是否允许, 允许时的未验证标记或拒绝原因)。"""
         latest = self.latest
         if latest is None:
             return False, ""
         if latest.get("accepted") is True:
+            recorded = latest.get("deliverables")
+            if recorded is None:
+                return True, "本轮判词来自旧版本，未绑定交付产物哈希；请确认 artifacts/ 未被修改"
+            if recorded != self._deliverable_manifest():
+                return (
+                    False,
+                    (
+                        "验收后 artifacts/ 下的交付产物已变更，与判词记录的哈希不一致；"
+                        "请重新提交验证，取得新判词后再 finish。"
+                    ),
+                )
             return True, ""
         status = latest.get("status")
         if status == "blocked":
@@ -236,6 +250,49 @@ class FeatureAnalyzeVerifier:
         if status in {"error", "cancelled"}:
             return True, "本轮验证执行故障，最终结果未经验证"
         return False, ""
+
+    def _deliverable_manifest(self) -> dict[str, dict[str, Any]]:
+        """记录 artifacts/ 下显式交付文件的 sha256，把判词绑定到具体交付版本。"""
+        root = self.parent.state.workdir / "artifacts"
+        if root.is_symlink():
+            return {".": {"symlink": os.readlink(root)}}
+        if not root.is_dir():
+            return {}
+        manifest: dict[str, dict[str, Any]] = {}
+
+        def record(path: Path) -> None:
+            relative = path.relative_to(root).as_posix()
+            if path.is_symlink():
+                manifest[relative] = {"symlink": os.readlink(path)}
+                return
+            if not path.is_file():
+                return
+            digest = hashlib.sha256()
+            size = 0
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(_DELIVERABLE_CHUNK), b""):
+                    digest.update(chunk)
+                    size += len(chunk)
+            manifest[relative] = {"sha256": digest.hexdigest(), "size": size}
+
+        for current, directories, files in os.walk(root, followlinks=False):
+            base = Path(current)
+            for name in list(directories):
+                candidate = base / name
+                if candidate.is_symlink():
+                    directories.remove(name)
+                    record(candidate)
+            for name in files:
+                record(base / name)
+        return dict(sorted(manifest.items()))
+
+    def _deliverables_stale(self) -> bool:
+        """判断最近通过判词绑定的交付产物是否已与当前 artifacts/ 不一致。"""
+        latest = self.latest
+        if latest is None or latest.get("accepted") is not True:
+            return False
+        recorded = latest.get("deliverables")
+        return recorded is not None and recorded != self._deliverable_manifest()
 
     def _finish_rejection(self) -> str:
         """给出收尾被拒绝的具体原因与下一步动作。"""
@@ -480,6 +537,7 @@ class FeatureAnalyzeVerifier:
             "status": status,
             "feedback": feedback,
             "accepted": status in {"improved", "regressed"},
+            "deliverables": self._deliverable_manifest(),
             **{
                 key: self.current[key] for key in ("submission_id", "round_id", "verification_path")
             },
@@ -596,6 +654,7 @@ class FeatureAnalyzeVerifier:
             "status": "busy" if self._busy() else "idle",
             "latest_report": self.latest,
             "current_submission": self.current,
+            "deliverables_stale": self._deliverables_stale(),
             "queued_submissions": [
                 {key: item[key] for key in ("submission_id", "round_id", "notebook_name")}
                 for item in self.queue
