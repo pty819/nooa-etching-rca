@@ -32,13 +32,9 @@ import polars as pl
 
 def extract(trace, steps, params):
     step = steps.filter(pl.col("step_id") == 2).row(0, named=True)
-    start = step["start_s"] + params["start_fraction"] * (
-        step["end_s"] - step["start_s"]
-    )
+    start = step["start_s"] + params["start_fraction"] * (step["end_s"] - step["start_s"])
     window = trace.filter(
-        (pl.col("step_id") == 2)
-        & (pl.col("time_s") >= start)
-        & (pl.col("time_s") < step["end_s"])
+        (pl.col("step_id") == 2) & (pl.col("time_s") >= start) & (pl.col("time_s") < step["end_s"])
     )
     if window.is_empty():
         return None

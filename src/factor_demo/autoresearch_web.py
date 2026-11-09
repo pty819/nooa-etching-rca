@@ -33,13 +33,18 @@ def restore_state(path: Path, run: Path) -> SessionState:
             c for m in state.messages for c in m.get("tool_calls", []) if c["id"] not in answered
         ]
         for call in missing:
-            state.messages.append({
-                "role": "tool", "tool_call_id": call["id"],
-                "content": "上次执行中断，调用结果未确认；先检查已有产物，不要假定成功。",
-            })
+            state.messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call["id"],
+                    "content": "上次执行中断，调用结果未确认；先检查已有产物，不要假定成功。",
+                }
+            )
         return state
     return SessionState(
-        session_id=uuid.uuid4().hex, agent_id="main", task_id=run.name,
+        session_id=uuid.uuid4().hex,
+        agent_id="main",
+        task_id=run.name,
         workdir=run / "workspace",
     )
 
@@ -99,8 +104,10 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
     if provider.api_style == "openai" and provider.model.lower().startswith("glm-"):
         thinking["clear_thinking"] = False
     config = ModelConfig(
-        model=f"{provider.api_style}/{provider.model}", api_key=provider.api_key,
-        base_url=provider.base_url, timeout_s=settings.request_timeout,
+        model=f"{provider.api_style}/{provider.model}",
+        api_key=provider.api_key,
+        base_url=provider.base_url,
+        timeout_s=settings.request_timeout,
         thinking=thinking,
         reasoning_effort=settings.reasoning_effort if provider.api_style == "openai" else None,
         tool_choice="auto" if provider.model.lower().startswith("deepseek") else "required",
@@ -110,20 +117,34 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
     current = dataset.current()
     state.datasets.clear()
     model = WebModel(config, state, checkpoint, events)
-    session = Session(model, state, history_config=HistoryConfig(
-        context_window_tokens=settings.input_budget,
-    ))
+    session = Session(
+        model,
+        state,
+        history_config=HistoryConfig(
+            context_window_tokens=settings.input_budget,
+        ),
+    )
     session.register_dataset("DATASET", str(data_path), current.get("title", "当前会话数据"))
-    SandboxTools.register(session, config=SandboxConfig(
-        workdir=state.workdir, read_paths=(data_path,), timeout_s=120,
-    ))
+    SandboxTools.register(
+        session,
+        config=SandboxConfig(
+            workdir=state.workdir,
+            read_paths=(data_path,),
+            timeout_s=120,
+        ),
+    )
     TaskTools.register(session, storage_root=folder / "tasks")
     session.register_stateful_tool(FileTools)
     session.register_stateful_tool(PythonTools)
     session.register_stateful_tool(FeatureAnalyzeVerifier)
-    write_json(run / "status.json", {
-        "status": "running", "mission": events.task_id, "engine": "autoresearch_v2",
-    })
+    write_json(
+        run / "status.json",
+        {
+            "status": "running",
+            "mission": events.task_id,
+            "engine": "autoresearch_v2",
+        },
+    )
     events.emit("turn.start", mode=mode, engine="autoresearch_v2")
     owner = asyncio.current_task()
 
@@ -145,13 +166,17 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
                 async def observed_call(name, arguments, *, call_id=None):
                     """复用现有工具事件，并对讨论模式限制写入和执行能力。"""
                     started = time.monotonic()
-                    events.emit("agent.tool.start", name=name, tool_call_id=call_id,
-                                arguments=arguments)
+                    events.emit(
+                        "agent.tool.start", name=name, tool_call_id=call_id, arguments=arguments
+                    )
                     ok = False
                     output = ""
                     try:
                         if mode != "research" and name not in {
-                            "finish", "read_file", "task_list", "task_get",
+                            "finish",
+                            "read_file",
+                            "task_list",
+                            "task_get",
                         }:
                             raise PermissionError("讨论模式只能读取已有研究记录，不能执行或修改。")
                         result = await original_call(name, arguments, call_id=call_id)
@@ -166,8 +191,14 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
                         output = type(error).__name__
                         raise
                     finally:
-                        events.emit("agent.tool.end", name=name, tool_call_id=call_id, ok=ok,
-                                    elapsed_s=time.monotonic() - started, output=output[:12000])
+                        events.emit(
+                            "agent.tool.end",
+                            name=name,
+                            tool_call_id=call_id,
+                            ok=ok,
+                            elapsed_s=time.monotonic() - started,
+                            output=output[:12000],
+                        )
 
                 session.loop.tools.call = observed_call
                 instruction = (
@@ -192,6 +223,11 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
         with contextlib.suppress(asyncio.CancelledError):
             await watcher
         write_json(checkpoint, state.model_dump(mode="json"))
-        write_json(run / "status.json", {
-            "status": status, "mission": events.task_id, "engine": "autoresearch_v2",
-        })
+        write_json(
+            run / "status.json",
+            {
+                "status": status,
+                "mission": events.task_id,
+                "engine": "autoresearch_v2",
+            },
+        )

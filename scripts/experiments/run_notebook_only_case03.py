@@ -21,7 +21,9 @@ BASELINE = PROJECT / "runs/case03-native-rerun-20261102-173817"
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--run-dir", type=Path, required=True)
 parser.add_argument("--preflight", action="store_true")
-parser.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high", "max"])
+parser.add_argument(
+    "--reasoning-effort", default="medium", choices=["low", "medium", "high", "max"]
+)
 parser.add_argument("--timeout", type=float, default=7200, help="整次研究时限，单位秒")
 parser.add_argument("--with-verifier", action="store_true", help="使用当前代码和提示词联动验证器")
 ARGS = parser.parse_args()
@@ -29,8 +31,11 @@ ROOT = ARGS.run_dir.resolve()
 ROOT.mkdir(parents=True, exist_ok=True)
 if not (ROOT / "source").exists():
     if ARGS.with_verifier:
-        shutil.copytree(PROJECT / "src/factor_demo", ROOT / "source/factor_demo",
-                        ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"))
+        shutil.copytree(
+            PROJECT / "src/factor_demo",
+            ROOT / "source/factor_demo",
+            ignore=shutil.ignore_patterns("__pycache__", ".DS_Store"),
+        )
     else:
         shutil.copytree(
             BASELINE / "source", ROOT / "source", ignore=shutil.ignore_patterns("__pycache__")
@@ -51,8 +56,11 @@ if ARGS.with_verifier:
     from factor_demo.autoresearch_agent_v2.feature_verifier.prompts import VERIFIER_PROMPT
 
 WORK = ROOT / "workspace"
-PROMPT = (SYSTEM_PROMPT if ARGS.with_verifier else
-          (PROJECT / "configs/experiments/notebook_only_system_prompt.txt").read_text())
+PROMPT = (
+    SYSTEM_PROMPT
+    if ARGS.with_verifier
+    else (PROJECT / "configs/experiments/notebook_only_system_prompt.txt").read_text()
+)
 
 
 def now():
@@ -230,16 +238,22 @@ if __name__ == "__main__":
             {
                 "baseline": str(BASELINE),
                 "case": "case_03",
-                "source": "current source snapshot" if ARGS.with_verifier else "baseline frozen snapshot",
+                "source": "current source snapshot"
+                if ARGS.with_verifier
+                else "baseline frozen snapshot",
                 "with_verifier": ARGS.with_verifier,
                 "outer_docker": False,
                 "execution_backend": "macos",
                 "disabled_tools": ["sandbox__run_shell"],
-                "prompt": ("current SYSTEM_PROMPT + verifier instructions" if ARGS.with_verifier else
-                           str(PROJECT / "configs/experiments/notebook_only_system_prompt.txt")),
+                "prompt": (
+                    "current SYSTEM_PROMPT + verifier instructions"
+                    if ARGS.with_verifier
+                    else str(PROJECT / "configs/experiments/notebook_only_system_prompt.txt")
+                ),
                 "input_file_count": len(hashes),
                 "all_input_hashes_match": True,
-                "limitations": ["单次联动测试，不作为与历史运行的受控比较。"] if ARGS.with_verifier
+                "limitations": ["单次联动测试，不作为与历史运行的受控比较。"]
+                if ARGS.with_verifier
                 else ["单次运行；提示词和工具可用性共同变化，不能单独归因。"],
             },
         )

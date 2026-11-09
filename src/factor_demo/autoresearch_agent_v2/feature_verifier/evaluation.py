@@ -40,8 +40,19 @@ def evaluate(table: pd.DataFrame, spec: dict) -> tuple[dict, pd.DataFrame, pd.Da
     missing = set(features + meta) - set(table.columns)
     if missing:
         raise ValueError(f"缺少字段：{sorted(missing)}")
-    forbidden = {"label", "target", "period", "period_id", "timestamp", "run_id", "batch_id",
-                 "lot", "lot_id", "split", "sample_id"}
+    forbidden = {
+        "label",
+        "target",
+        "period",
+        "period_id",
+        "timestamp",
+        "run_id",
+        "batch_id",
+        "lot",
+        "lot_id",
+        "split",
+        "sample_id",
+    }
     if any(f.lower() in forbidden for f in features):
         raise ValueError("标识、时间和目标代理字段不得作为候选特征")
     if table[meta].isna().any().any() or table[spec["sample_id"]].duplicated().any():
@@ -55,8 +66,7 @@ def evaluate(table: pd.DataFrame, spec: dict) -> tuple[dict, pd.DataFrame, pd.Da
     x = table[features].apply(pd.to_numeric, errors="raise")
     if np.isinf(x.to_numpy()).any():
         raise ValueError("候选特征不可含无穷值")
-    class_names, y = np.unique(table[spec["target"]].astype(str).to_numpy(),
-                               return_inverse=True)
+    class_names, y = np.unique(table[spec["target"]].astype(str).to_numpy(), return_inverse=True)
     groups = table[spec["group"]].astype(str).to_numpy()
     train = np.flatnonzero(table[spec["split"]].eq("train").to_numpy())
     dev = np.flatnonzero(table[spec["split"]].eq("dev").to_numpy())
@@ -72,18 +82,31 @@ def evaluate(table: pd.DataFrame, spec: dict) -> tuple[dict, pd.DataFrame, pd.Da
         raise ValueError("dev 必须覆盖全部训练类别，不得包含新类别")
 
     models = {
-        "dummy": make_pipeline(SimpleImputer(keep_empty_features=True),
-                               DummyClassifier(strategy="prior")),
+        "dummy": make_pipeline(
+            SimpleImputer(keep_empty_features=True), DummyClassifier(strategy="prior")
+        ),
         "logistic_regression": make_pipeline(
-            SimpleImputer(keep_empty_features=True), StandardScaler(),
-            LogisticRegression(class_weight="balanced", max_iter=2000, random_state=42)),
+            SimpleImputer(keep_empty_features=True),
+            StandardScaler(),
+            LogisticRegression(class_weight="balanced", max_iter=2000, random_state=42),
+        ),
         "random_forest": make_pipeline(
             SimpleImputer(keep_empty_features=True),
-            RandomForestClassifier(n_estimators=100, max_depth=6, min_samples_leaf=2,
-                                   class_weight="balanced", n_jobs=1, random_state=42)),
+            RandomForestClassifier(
+                n_estimators=100,
+                max_depth=6,
+                min_samples_leaf=2,
+                class_weight="balanced",
+                n_jobs=1,
+                random_state=42,
+            ),
+        ),
     }
-    folds = list(StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
-                 .split(x.iloc[train], y[train], groups[train]))
+    folds = list(
+        StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42).split(
+            x.iloc[train], y[train], groups[train]
+        )
+    )
     scores, predictions = [], []
     for fold, (fit_local, val_local) in enumerate(folds, 1):
         fit, val = train[fit_local], train[val_local]
@@ -91,11 +114,37 @@ def evaluate(table: pd.DataFrame, spec: dict) -> tuple[dict, pd.DataFrame, pd.Da
             raise ValueError("交叉验证组发生重叠")
         if set(y[fit]) != set(classes) or set(y[val]) != set(classes):
             raise ValueError("至少一折缺少类别；当前分组结构不支持完整五折验证")
-        _score_split(models, x, y, groups, table, spec, fit, val, "cv", fold,
-                     scores, predictions, class_names)
+        _score_split(
+            models,
+            x,
+            y,
+            groups,
+            table,
+            spec,
+            fit,
+            val,
+            "cv",
+            fold,
+            scores,
+            predictions,
+            class_names,
+        )
     if dev.size:
-        _score_split(models, x, y, groups, table, spec, train, dev, "dev", 0,
-                     scores, predictions, class_names)
+        _score_split(
+            models,
+            x,
+            y,
+            groups,
+            table,
+            spec,
+            train,
+            dev,
+            "dev",
+            0,
+            scores,
+            predictions,
+            class_names,
+        )
 
     metrics = pd.DataFrame(scores)
     cv = metrics[metrics.partition.eq("cv")]
@@ -109,53 +158,86 @@ def evaluate(table: pd.DataFrame, spec: dict) -> tuple[dict, pd.DataFrame, pd.Da
             "std_balanced_accuracy": float(selected.std(ddof=1)),
             "min_balanced_accuracy": float(selected.min()),
             "folds_above_dummy_margin": int(((selected - baseline) >= 0.05).sum()),
-            "dev_balanced_accuracy": None if dev_rows.empty else float(
-                dev_rows.balanced_accuracy.iloc[0]),
+            "dev_balanced_accuracy": None
+            if dev_rows.empty
+            else float(dev_rows.balanced_accuracy.iloc[0]),
         }
     # 固定规则只评价已提交的候选集，不按结果搜索或调参。
-    passed = [name for name in models if name != "dummy"
-              and summary[name]["folds_above_dummy_margin"] >= 4]
+    passed = [
+        name
+        for name in models
+        if name != "dummy" and summary[name]["folds_above_dummy_margin"] >= 4
+    ]
     if spec["selection_scope"] == "train_discovered":
-        passed = [name for name in passed if dev.size and spec["dev_usage"] == "untouched" and
-                  summary[name]["dev_balanced_accuracy"] >=
-                  summary["dummy"]["dev_balanced_accuracy"] + 0.05]
+        passed = [
+            name
+            for name in passed
+            if dev.size
+            and spec["dev_usage"] == "untouched"
+            and summary[name]["dev_balanced_accuracy"]
+            >= summary["dummy"]["dev_balanced_accuracy"] + 0.05
+        ]
     missing_dev = spec["selection_scope"] == "train_discovered" and (
-        not dev.size or spec["dev_usage"] != "untouched")
+        not dev.size or spec["dev_usage"] != "untouched"
+    )
     result = {
         "status": "inconclusive" if missing_dev else ("accepted" if passed else "rejected"),
-        "reason": "已筛选特征缺少未参与研究决策的独立 dev，不能确认有效性" if missing_dev else
-                  ("候选特征集通过预设稳定性规则" if passed else "未通过预设稳定性规则"),
-        "models": summary, "passing_models": passed,
-        "policy": {"folds": 5, "min_passing_folds": 4, "dummy_margin": 0.05,
-                   "group_weighting": "每个独立组在评分中总权重相同",
-                   "selection_scope": spec["selection_scope"], "dev_usage": spec["dev_usage"]},
+        "reason": "已筛选特征缺少未参与研究决策的独立 dev，不能确认有效性"
+        if missing_dev
+        else ("候选特征集通过预设稳定性规则" if passed else "未通过预设稳定性规则"),
+        "models": summary,
+        "passing_models": passed,
+        "policy": {
+            "folds": 5,
+            "min_passing_folds": 4,
+            "dummy_margin": 0.05,
+            "group_weighting": "每个独立组在评分中总权重相同",
+            "selection_scope": spec["selection_scope"],
+            "dev_usage": spec["dev_usage"],
+        },
         "scope": "固定候选特征集的分类预测有效性；不证明每个特征独立有效或物理因果",
-        "limitations": ["通过阈值是工程验收规则，不是统计显著性检验",
-                        "train_discovered 的训练交叉验证含发现偏差，独立 dev 为补充检查",
-                        "验证器依赖提交的分组、划分及特征来源声明，需要核对 Notebook"],
+        "limitations": [
+            "通过阈值是工程验收规则，不是统计显著性检验",
+            "train_discovered 的训练交叉验证含发现偏差，独立 dev 为补充检查",
+            "验证器依赖提交的分组、划分及特征来源声明，需要核对 Notebook",
+        ],
     }
     return result, metrics, pd.DataFrame(predictions)
 
 
-def _score_split(models, x, y, groups, table, spec, fit, val, partition, fold,
-                 scores, predictions, class_names):
+def _score_split(
+    models, x, y, groups, table, spec, fit, val, partition, fold, scores, predictions, class_names
+):
     """在训练范围拟合全部预处理，并对独立组等权评分。"""
     counts = pd.Series(groups[val]).value_counts()
     weights = np.array([1.0 / counts[g] for g in groups[val]])
     for name, prototype in models.items():
         model = clone(prototype).fit(x.iloc[fit], y[fit])
         pred = model.predict(x.iloc[val])
-        scores.append({
-            "partition": partition, "fold": fold, "model": name,
-            "balanced_accuracy": balanced_accuracy_score(y[val], pred, sample_weight=weights),
-            "macro_f1": f1_score(y[val], pred, average="macro", sample_weight=weights),
-            "train_groups": len(set(groups[fit])), "validation_groups": len(set(groups[val])),
-        })
+        scores.append(
+            {
+                "partition": partition,
+                "fold": fold,
+                "model": name,
+                "balanced_accuracy": balanced_accuracy_score(y[val], pred, sample_weight=weights),
+                "macro_f1": f1_score(y[val], pred, average="macro", sample_weight=weights),
+                "train_groups": len(set(groups[fit])),
+                "validation_groups": len(set(groups[val])),
+            }
+        )
         for index, prediction, weight in zip(val, pred, weights, strict=True):
-            predictions.append({"partition": partition, "fold": fold, "model": name,
-                                "sample_id": table[spec["sample_id"]].iloc[index],
-                                "group": groups[index], "target": class_names[y[index]],
-                                "prediction": class_names[prediction], "weight": weight})
+            predictions.append(
+                {
+                    "partition": partition,
+                    "fold": fold,
+                    "model": name,
+                    "sample_id": table[spec["sample_id"]].iloc[index],
+                    "group": groups[index],
+                    "target": class_names[y[index]],
+                    "prediction": class_names[prediction],
+                    "weight": weight,
+                }
+            )
 
 
 def save_results(result, metrics, predictions, output: Path) -> None:
@@ -173,23 +255,32 @@ def save_results(result, metrics, predictions, output: Path) -> None:
     fig, ax = plt.subplots(figsize=(8, 4), constrained_layout=True)
     for name, rows in cv.groupby("model"):
         ax.plot(rows.fold, rows.balanced_accuracy, marker="o", label=name)
-    ax.set(xlabel="Fold", ylabel="Group-weighted balanced accuracy", ylim=(0, 1.05),
-           xticks=range(1, 6))
+    ax.set(
+        xlabel="Fold", ylabel="Group-weighted balanced accuracy", ylim=(0, 1.05), xticks=range(1, 6)
+    )
     ax.legend()
     fig.savefig(output / "cv_scores.png", dpi=160)
     plt.close(fig)
     names = sorted(cv.model.unique())
-    fig, axes = plt.subplots(1, len(names), figsize=(5 * len(names), 4),
-                             constrained_layout=True, squeeze=False)
+    fig, axes = plt.subplots(
+        1, len(names), figsize=(5 * len(names), 4), constrained_layout=True, squeeze=False
+    )
     for ax, name in zip(axes[0], names, strict=True):
         rows = predictions[predictions.partition.eq("cv") & predictions.model.eq(name)]
         labels = sorted(rows.target.unique())
-        matrix = confusion_matrix(rows.target, rows.prediction, labels=labels,
-                                  sample_weight=rows.weight, normalize="true")
+        matrix = confusion_matrix(
+            rows.target, rows.prediction, labels=labels, sample_weight=rows.weight, normalize="true"
+        )
         ax.imshow(matrix, vmin=0, vmax=1, cmap="Blues")
-        ax.set(title=name, xlabel="Predicted", ylabel="Observed",
-               xticks=range(len(labels)), yticks=range(len(labels)),
-               xticklabels=labels, yticklabels=labels)
+        ax.set(
+            title=name,
+            xlabel="Predicted",
+            ylabel="Observed",
+            xticks=range(len(labels)),
+            yticks=range(len(labels)),
+            xticklabels=labels,
+            yticklabels=labels,
+        )
         for i in range(len(labels)):
             for j in range(len(labels)):
                 ax.text(j, i, f"{matrix[i, j]:.2f}", ha="center", va="center")
@@ -205,6 +296,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     spec = json.loads((args.directory / "spec.json").read_text())
     result, metrics, predictions = evaluate(
-        pd.read_parquet(args.directory / "features.parquet"), spec)
+        pd.read_parquet(args.directory / "features.parquet"), spec
+    )
     save_results(result, metrics, predictions, args.directory)
     print(json.dumps(result, ensure_ascii=False))

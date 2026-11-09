@@ -25,18 +25,29 @@ def candidate_table():
     rng = np.random.default_rng(3)
     groups = np.repeat(np.arange(40), 2)
     target = groups % 2
-    return pd.DataFrame({
-        "sample": np.arange(len(groups)), "lot": groups, "label": target,
-        "split": np.where(groups < 30, "train", "dev"),
-        "sensor_mean": target * 10 + rng.normal(0, 0.2, len(groups)),
-    })
+    return pd.DataFrame(
+        {
+            "sample": np.arange(len(groups)),
+            "lot": groups,
+            "label": target,
+            "split": np.where(groups < 30, "train", "dev"),
+            "sensor_mean": target * 10 + rng.normal(0, 0.2, len(groups)),
+        }
+    )
 
 
 def feature_spec(**changes):
     """提供固定候选集和真实分组字段。"""
-    return {"features": ["sensor_mean"], "target": "label", "group": "lot",
-            "split": "split", "sample_id": "sample",
-            "selection_scope": "train_discovered", "dev_usage": "untouched", **changes}
+    return {
+        "features": ["sensor_mean"],
+        "target": "label",
+        "group": "lot",
+        "split": "split",
+        "sample_id": "sample",
+        "selection_scope": "train_discovered",
+        "dev_usage": "untouched",
+        **changes,
+    }
 
 
 def test_grouped_five_fold_scores_and_standalone_artifacts(tmp_path):
@@ -48,13 +59,20 @@ def test_grouped_five_fold_scores_and_standalone_artifacts(tmp_path):
         assert not rows.sample_id.duplicated().any()
         assert rows.groupby("group").fold.nunique().max() == 1
     save_results(result, metrics, predictions, tmp_path)
-    for name in ("validation.json", "fold_metrics.csv", "oof_predictions.csv",
-                 "cv_scores.png", "confusion_matrix.png"):
+    for name in (
+        "validation.json",
+        "fold_metrics.csv",
+        "oof_predictions.csv",
+        "cv_scores.png",
+        "confusion_matrix.png",
+    ):
         assert (tmp_path / name).stat().st_size > 0
 
 
-@pytest.mark.parametrize("problem", ["group_overlap", "test_rows", "target_feature",
-                                      "too_few_groups", "duplicate_sample"])
+@pytest.mark.parametrize(
+    "problem",
+    ["group_overlap", "test_rows", "target_feature", "too_few_groups", "duplicate_sample"],
+)
 def test_leakage_and_invalid_folds_are_rejected(problem):
     table, spec = candidate_table(), feature_spec()
     if problem == "group_overlap":
@@ -92,8 +110,11 @@ def test_dev_already_used_in_research_cannot_certify_discovered_features():
 
 def tool_call(name, arguments, identity):
     """构造模拟模型工具调用；统计和沙箱仍使用实际实现。"""
-    return {"id": identity, "type": "function", "function": {
-        "name": name, "arguments": json.dumps(arguments)}}
+    return {
+        "id": identity,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
 
 
 @pytest.mark.parametrize("effort", ["medium", "high"])
@@ -112,17 +133,33 @@ def test_persistent_verifier_nonblocking_submission_and_report(tmp_path, monkeyp
         assert self.config.reasoning_effort == effort
         entered.set()
         await release.wait()
-        return {"role": "assistant", "tool_calls": [tool_call(
-            "report", {"status": "regressed", "feedback": "持平；sensor_mean 重要性 1；证据 tmp/cv.csv"},
-            f"report-{len(requests)}")]}
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                tool_call(
+                    "report",
+                    {
+                        "status": "regressed",
+                        "feedback": "持平；sensor_mean 重要性 1；证据 tmp/cv.csv",
+                    },
+                    f"report-{len(requests)}",
+                )
+            ],
+        }
 
     monkeypatch.setattr(VerifierModel, "completion", complete)
 
     async def scenario():
-        model = Model(ModelConfig(model="openai/fixture", api_key="fixture", reasoning_effort=effort))
-        state = SessionState(session_id="research", agent_id="research", task_id="t",
-                             workdir=tmp_path,
-                             messages=[{"role": "user", "content": "研究端秘密历史"}])
+        model = Model(
+            ModelConfig(model="openai/fixture", api_key="fixture", reasoning_effort=effort)
+        )
+        state = SessionState(
+            session_id="research",
+            agent_id="research",
+            task_id="t",
+            workdir=tmp_path,
+            messages=[{"role": "user", "content": "研究端秘密历史"}],
+        )
         session = Session(model, state)
         session.register_stateful_tool(NotebookTools)
         session.register_stateful_tool(FeatureAnalyzeVerifier)
@@ -132,17 +169,23 @@ def test_persistent_verifier_nonblocking_submission_and_report(tmp_path, monkeyp
             notebooks._kernels["round1"] = None
             notebooks._save_document("round1", nbformat.v4.new_notebook(), None)
             try:
-                first = await session.call("feature_analyze_verifier", {
-                    "notebook_name": "round1", "report": "第一版", "round_id": "r1"})
+                first = await session.call(
+                    "feature_analyze_verifier",
+                    {"notebook_name": "round1", "report": "第一版", "round_id": "r1"},
+                )
                 assert first["status"] == "submitted"
                 await asyncio.wait_for(entered.wait(), 5)
                 assert not verifier.task.done()
                 # 父会话继续操作，新提交入队，但不提前进入 verifier 消息。
-                result = await session.call("register_dataset", {
-                    "name": "continue", "path": "input.csv", "description": "继续研究"})
+                result = await session.call(
+                    "register_dataset",
+                    {"name": "continue", "path": "input.csv", "description": "继续研究"},
+                )
                 assert result["name"] == "continue"
-                queued = await session.call("feature_analyze_verifier", {
-                    "notebook_name": "round1", "report": "排队研究", "round_id": "r2"})
+                queued = await session.call(
+                    "feature_analyze_verifier",
+                    {"notebook_name": "round1", "report": "排队研究", "round_id": "r2"},
+                )
                 assert queued["status"] == "submitted"
                 assert (await verifier.status())["queue_length"] == 1
                 assert len(requests) == 1
@@ -157,8 +200,10 @@ def test_persistent_verifier_nonblocking_submission_and_report(tmp_path, monkeyp
                 assert verifier.child.resource(Sandbox).config.read_paths == ()
                 await session.loop.before_completion_hook()
                 assert "sensor_mean" in state.messages[-1]["content"]
-                second = await session.call("feature_analyze_verifier", {
-                    "notebook_name": "round1", "report": "原轮修订", "round_id": "r1"})
+                second = await session.call(
+                    "feature_analyze_verifier",
+                    {"notebook_name": "round1", "report": "原轮修订", "round_id": "r1"},
+                )
                 assert second["submission_id"] != first["submission_id"]
                 await verifier.status(wait=True)
                 assert verifier.child.state.session_id == identity
@@ -185,6 +230,7 @@ def test_persistent_verifier_nonblocking_submission_and_report(tmp_path, monkeyp
 @pytest.mark.parametrize("mode", ["error", "cancelled", "invalid_report"])
 def test_verifier_failure_preserves_queued_submissions(tmp_path, monkeypatch, mode):
     """执行故障、取消和无效状态不能冒充 report 或投递排队提交。"""
+
     async def complete(self, messages, *, tools=None):
         if mode == "cancelled":
             raise asyncio.CancelledError
@@ -194,8 +240,9 @@ def test_verifier_failure_preserves_queued_submissions(tmp_path, monkeypatch, mo
 
     async def scenario():
         model = Model(ModelConfig(model="openai/fixture", api_key="fixture"))
-        session = Session(model, SessionState(session_id="r", agent_id="r", task_id="t",
-                                              workdir=tmp_path))
+        session = Session(
+            model, SessionState(session_id="r", agent_id="r", task_id="t", workdir=tmp_path)
+        )
         session.register_stateful_tool(NotebookTools)
         session.register_stateful_tool(FeatureAnalyzeVerifier)
         async with session:
@@ -216,12 +263,23 @@ def test_verifier_failure_preserves_queued_submissions(tmp_path, monkeypatch, mo
                 assert not list((tmp_path / "verifier_runs").glob("*/result.json"))
                 if mode == "invalid_report":
                     with pytest.raises(ValidationError):
-                        await verifier.child.loop.tools.call("report", {
-                            "status": "accepted", "feedback": "错误状态"})
+                        await verifier.child.loop.tools.call(
+                            "report", {"status": "accepted", "feedback": "错误状态"}
+                        )
+
                 # 恢复原提交，真实 report 后才重新开放。
                 async def recovered(self, messages, *, tools=None):
-                    return {"role": "assistant", "tool_calls": [tool_call(
-                        "report", {"status": "blocked", "feedback": "缺少目录内数据"}, "recovered")]}
+                    return {
+                        "role": "assistant",
+                        "tool_calls": [
+                            tool_call(
+                                "report",
+                                {"status": "blocked", "feedback": "缺少目录内数据"},
+                                "recovered",
+                            )
+                        ],
+                    }
+
                 monkeypatch.setattr(VerifierModel, "completion", recovered)
                 status = await verifier.status(retry=True, wait=True)
                 assert status["status"] == "idle"
@@ -254,9 +312,10 @@ def test_close_and_resume_unreported_submission(tmp_path, monkeypatch):
 
     def make_session():
         """创建同一研究任务的宿主会话。"""
-        session = Session(Model(ModelConfig(model="openai/fixture", api_key="fixture")),
-                          SessionState(session_id="r", agent_id="r", task_id="t",
-                                       workdir=tmp_path))
+        session = Session(
+            Model(ModelConfig(model="openai/fixture", api_key="fixture")),
+            SessionState(session_id="r", agent_id="r", task_id="t", workdir=tmp_path),
+        )
         session.register_stateful_tool(NotebookTools)
         session.register_stateful_tool(FeatureAnalyzeVerifier)
         return session
@@ -267,11 +326,15 @@ def test_close_and_resume_unreported_submission(tmp_path, monkeypatch):
             notebooks._kernels["r1"] = None
             notebooks._save_document("r1", nbformat.v4.new_notebook(), None)
             try:
-                receipt = await session.call("feature_analyze_verifier", {
-                    "notebook_name": "r1", "report": "未完成验证", "round_id": "r1"})
+                receipt = await session.call(
+                    "feature_analyze_verifier",
+                    {"notebook_name": "r1", "report": "未完成验证", "round_id": "r1"},
+                )
                 await asyncio.wait_for(entered.wait(), 5)
-                queued = await session.call("feature_analyze_verifier", {
-                    "notebook_name": "r1", "report": "排队的下一轮", "round_id": "r2"})
+                queued = await session.call(
+                    "feature_analyze_verifier",
+                    {"notebook_name": "r1", "report": "排队的下一轮", "round_id": "r2"},
+                )
             finally:
                 notebooks._kernels.clear()
         async with make_session() as resumed:
@@ -282,8 +345,16 @@ def test_close_and_resume_unreported_submission(tmp_path, monkeypatch):
 
             async def complete(self, messages, *, tools=None):
                 assert receipt["verification_path"] in str(messages)
-                return {"role": "assistant", "tool_calls": [tool_call(
-                    "report", {"status": "needs_revision", "feedback": "原轮缺少关键计算"}, "resume")]}
+                return {
+                    "role": "assistant",
+                    "tool_calls": [
+                        tool_call(
+                            "report",
+                            {"status": "needs_revision", "feedback": "原轮缺少关键计算"},
+                            "resume",
+                        )
+                    ],
+                }
 
             monkeypatch.setattr(VerifierModel, "completion", complete)
             status = await verifier.status(retry=True, wait=True)
@@ -310,16 +381,24 @@ def test_concurrent_submissions_are_frozen_and_processed_fifo(tmp_path, monkeypa
         if len(order) == 1:
             entered.set()
             await release.wait()
-        return {"role": "assistant", "tool_calls": [tool_call(
-            "report", {"status": "regressed", "feedback": f"已验证 {submission['round_id']}"},
-            f"fifo-{len(order)}")]}
+        return {
+            "role": "assistant",
+            "tool_calls": [
+                tool_call(
+                    "report",
+                    {"status": "regressed", "feedback": f"已验证 {submission['round_id']}"},
+                    f"fifo-{len(order)}",
+                )
+            ],
+        }
 
     monkeypatch.setattr(VerifierModel, "completion", completion)
 
     async def scenario():
-        session = Session(Model(ModelConfig(model="openai/fixture", api_key="fixture")),
-                          SessionState(session_id="r", agent_id="r", task_id="t",
-                                       workdir=tmp_path))
+        session = Session(
+            Model(ModelConfig(model="openai/fixture", api_key="fixture")),
+            SessionState(session_id="r", agent_id="r", task_id="t", workdir=tmp_path),
+        )
         session.register_stateful_tool(NotebookTools)
         session.register_stateful_tool(FeatureAnalyzeVerifier)
         async with session:
@@ -330,9 +409,9 @@ def test_concurrent_submissions_are_frozen_and_processed_fifo(tmp_path, monkeypa
             try:
                 first = await verifier.submit("n", "首轮", round_id="r0")
                 await entered.wait()
-                receipts = await asyncio.gather(*[
-                    verifier.submit("n", f"第{i}轮", round_id=f"r{i}")
-                    for i in range(1, 4)])
+                receipts = await asyncio.gather(
+                    *[verifier.submit("n", f"第{i}轮", round_id=f"r{i}") for i in range(1, 4)]
+                )
                 assert all(item["status"] == "submitted" for item in receipts)
                 saved = json.loads((tmp_path / "verifier_runs/control.json").read_text())
                 assert [item["round_id"] for item in saved["queue"]] == ["r1", "r2", "r3"]
@@ -340,11 +419,17 @@ def test_concurrent_submissions_are_frozen_and_processed_fifo(tmp_path, monkeypa
                 assert order == ["r0"]
                 for item in receipts:
                     assert item["verification_path"] not in str(verifier.child.state.messages)
-                frozen = (tmp_path / receipts[0]["verification_path"] / "notebook.ipynb").read_text()
-                notebooks._save_document("n", nbformat.v4.new_notebook(
-                    cells=[nbformat.v4.new_markdown_cell("后续修改")]),
-                    notebooks._read_document("n"))
-                assert (tmp_path / receipts[0]["verification_path"] / "notebook.ipynb").read_text() == frozen
+                frozen = (
+                    tmp_path / receipts[0]["verification_path"] / "notebook.ipynb"
+                ).read_text()
+                notebooks._save_document(
+                    "n",
+                    nbformat.v4.new_notebook(cells=[nbformat.v4.new_markdown_cell("后续修改")]),
+                    notebooks._read_document("n"),
+                )
+                assert (
+                    tmp_path / receipts[0]["verification_path"] / "notebook.ipynb"
+                ).read_text() == frozen
                 release.set()
                 status = await verifier.status(wait=True)
                 assert status["status"] == "idle"

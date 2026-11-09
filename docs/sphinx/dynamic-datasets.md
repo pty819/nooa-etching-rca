@@ -91,15 +91,17 @@ child.write_parquet(out / "runs.parquet")
 
 ```python
 parent = await self.inspect_dataset()
-child = await self.derive_dataset(DatasetDerivation(
-    title="每lot一片",
-    parents=[parent["id"]],
-    output_dir="artifacts/one-wafer-per-lot",
-    source="artifacts/build-subset.py",
-    reason="专家要求先检查独立lot的稳定性",
-    data_schema=DatasetSchema(**parent["schema"]),
-    relation="subset",
-))
+child = await self.derive_dataset(
+    DatasetDerivation(
+        title="每lot一片",
+        parents=[parent["id"]],
+        output_dir="artifacts/one-wafer-per-lot",
+        source="artifacts/build-subset.py",
+        reason="专家要求先检查独立lot的稳定性",
+        data_schema=DatasetSchema(**parent["schema"]),
+        relation="subset",
+    )
+)
 # The next worker sees the child through DATASET.
 await self.run_code("import polars as pl; print(pl.read_parquet(DATASET/'runs.parquet').shape)")
 await self.return_dataset("parent")

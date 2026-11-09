@@ -14,29 +14,54 @@ from factor_demo.live_events import LiveEvents
 
 def call(name, arguments, identity):
     """构造模拟模型的原生工具调用。"""
-    return {"id": identity, "type": "function", "function": {
-        "name": name, "arguments": json.dumps(arguments),
-    }}
+    return {
+        "id": identity,
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": json.dumps(arguments),
+        },
+    }
 
 
 def configure(monkeypatch):
     """使用无凭据的模型配置。"""
-    monkeypatch.setattr("factor_demo.autoresearch_web.load_provider", lambda name: SimpleNamespace(
-        model="fixture", api_style="openai", api_key="fixture", base_url="https://invalid.test",
-    ))
+    monkeypatch.setattr(
+        "factor_demo.autoresearch_web.load_provider",
+        lambda name: SimpleNamespace(
+            model="fixture",
+            api_style="openai",
+            api_key="fixture",
+            base_url="https://invalid.test",
+        ),
+    )
 
 
 def test_turn_persists_tasks_results_and_frontend_events(tmp_path, monkeypatch):
     configure(monkeypatch)
     run = public_case(tmp_path / "case")
-    responses = iter([
-        [call("task_create", {"subject": "01 核查", "description": "目的、方法与验证"}, "t1"),
-         call("write_file", {"path": "artifacts/01_check/report.md", "content": "研究结果"}, "w1")],
-        [call("task_update", {"task_id": "T1", "status": "completed"}, "t2"),
-         call("finish", {"content": "已完成，见 [报告](artifacts/01_check/report.md)"}, "f1")],
-        [call("task_list", {}, "l1")],
-        [call("finish", {"content": "已有研究已保留"}, "f2")],
-    ])
+    responses = iter(
+        [
+            [
+                call(
+                    "task_create", {"subject": "01 核查", "description": "目的、方法与验证"}, "t1"
+                ),
+                call(
+                    "write_file",
+                    {"path": "artifacts/01_check/report.md", "content": "研究结果"},
+                    "w1",
+                ),
+            ],
+            [
+                call("task_update", {"task_id": "T1", "status": "completed"}, "t2"),
+                call(
+                    "finish", {"content": "已完成，见 [报告](artifacts/01_check/report.md)"}, "f1"
+                ),
+            ],
+            [call("task_list", {}, "l1")],
+            [call("finish", {"content": "已有研究已保留"}, "f2")],
+        ]
+    )
     histories = []
 
     async def completion(self, messages, *, tools=None):
@@ -63,10 +88,12 @@ def test_turn_persists_tasks_results_and_frontend_events(tmp_path, monkeypatch):
 def test_discussion_cannot_write_or_execute(tmp_path, monkeypatch):
     configure(monkeypatch)
     run = public_case(tmp_path / "case")
-    responses = iter([
-        [call("write_file", {"path": "artifacts/forbidden.md", "content": "不能保存"}, "w")],
-        [call("finish", {"content": "只讨论已有结果"}, "f")],
-    ])
+    responses = iter(
+        [
+            [call("write_file", {"path": "artifacts/forbidden.md", "content": "不能保存"}, "w")],
+            [call("finish", {"content": "只讨论已有结果"}, "f")],
+        ]
+    )
 
     async def completion(self, messages, *, tools=None):
         return {"role": "assistant", "tool_calls": next(responses)}
@@ -114,9 +141,15 @@ def test_web_worker_routes_by_saved_session_engine(tmp_path, monkeypatch, engine
     run = public_case(tmp_path / "case")
     (run / "requests").mkdir()
     (run / "ui.json").write_text(json.dumps({"engine": engine}))
-    (run / "requests/request.json").write_text(json.dumps({
-        "message": "研究", "mode": "research", "provider": "fixture",
-    }))
+    (run / "requests/request.json").write_text(
+        json.dumps(
+            {
+                "message": "研究",
+                "mode": "research",
+                "provider": "fixture",
+            }
+        )
+    )
     selected = []
 
     async def old(*args, **kwargs):
