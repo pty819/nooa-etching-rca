@@ -28,8 +28,10 @@
 ```python
 v1 = await self.code_write("score", "def score(x):\n    return x / 0\n")
 failed = await self.code_experiment(
-    "score", v1["revision"],
-    'assert score(PARAMETERS["x"]) == 4', parameters={"x": 2},
+    "score",
+    v1["revision"],
+    'assert score(PARAMETERS["x"]) == 4',
+    parameters={"x": 2},
 )
 assert failed["status"] == "failed"
 
@@ -39,7 +41,9 @@ assert repair["status"] == "verified"
 assert repair["goal_satisfied"] is None
 
 goal = await self.verify_goal(
-    "score(2) 应等于 4", repair["experiment_id"], "assert score(2) == 4",
+    "score(2) 应等于 4",
+    repair["experiment_id"],
+    "assert score(2) == 4",
 )
 assert goal["supplied_criterion_passed"]
 ```

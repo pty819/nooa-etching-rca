@@ -74,7 +74,11 @@ def main():
         from .sandboxing import dotenv_warnings, execution_info, prepare_font_cache
 
         info = execution_info()
-        info["orchestration_sandbox"] = sandbox_status()
+        try:
+            info["orchestration_sandbox"] = sandbox_status()
+        except RuntimeError as exc:
+            # 诊断命令不能因平台缺少 seccomp 等能力而崩溃，保留原因供排查。
+            info["orchestration_sandbox"] = {"available": False, "error": str(exc)}
         info["warnings"] = dotenv_warnings()
         if args.warm_font_cache:
             info.update(prepare_font_cache())

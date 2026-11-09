@@ -249,7 +249,7 @@ def test_recovery_preserves_source_and_rejects_changed_or_unsafe_inputs(tmp_path
                 "tool_calls": [
                     {"id": "pending", "function": {"name": "sandbox__run_shell", "arguments": "{}"}}
                 ],
-            }
+            },
         ],
         compaction={"summary": "早期任务已有结果。", "end_index": 2, "source_message_count": 2},
     )

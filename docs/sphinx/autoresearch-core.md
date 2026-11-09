@@ -368,9 +368,7 @@ Anthropic 原生消息由 LiteLLM 适配，因此统一格式与供应商原始 
 ```python
 from factor_demo.autoresearch_agent_v2.agent import Session, SessionState
 
-state = SessionState(
-    session_id="session-1", agent_id="agent-1", task_id="task-1", workdir=workdir
-)
+state = SessionState(session_id="session-1", agent_id="agent-1", task_id="task-1", workdir=workdir)
 session = Session(model, state)
 result = await session.run("分析当前数据，并报告结果。")
 follow_up = await session.run("继续解释刚才的结果。")
@@ -491,6 +489,7 @@ class MyAgentLoop(AgentLoop):
 ```python
 def double(value: int) -> int:
     return value * 2
+
 
 session.loop.tools.register(
     "double",
@@ -635,6 +634,7 @@ Session 顺序执行对话轮次和直接工具调用，不支持组间并行或
 async def borrow_sandbox(session):
     yield host_sandbox
 
+
 session.register_resource(Sandbox, borrow_sandbox)
 session.register_stateful_tool(SandboxTools)
 ```
@@ -658,15 +658,21 @@ session.register_stateful_tool(NotebookTools)
 
 async with session:
     await session.call("notebook__create_notebook", {"notebook_name": "数据探索"})
-    cell = await session.call("notebook__write_new_cell", {
-        "notebook_name": "数据探索",
-        "source": "x = 40\nx + 2",
-    })
-    result = await session.call("notebook__exec_cell", {
-        "notebook_name": "数据探索",
-        "cell_id": cell["cell_id"],
-        "revision": cell["revision"],
-    })
+    cell = await session.call(
+        "notebook__write_new_cell",
+        {
+            "notebook_name": "数据探索",
+            "source": "x = 40\nx + 2",
+        },
+    )
+    result = await session.call(
+        "notebook__exec_cell",
+        {
+            "notebook_name": "数据探索",
+            "cell_id": cell["cell_id"],
+            "revision": cell["revision"],
+        },
+    )
     notebooks = await session.call("notebook__list_notebooks", {})
 ```
 
@@ -798,15 +804,21 @@ class Statistics:
 ```python
 await session.call("python__describe_class", {"class_name": "Statistics"})
 await session.call("notebook__create_notebook", {"notebook_name": "统计验证"})
-cell = await session.call("notebook__write_new_cell", {
-    "notebook_name": "统计验证",
-    "source": 'result = Statistics.summarize([1.0, 2.0, 3.0])\nprint(result["mean"])',
-})
-result = await session.call("notebook__exec_cell", {
-    "notebook_name": "统计验证",
-    "cell_id": cell["cell_id"],
-    "revision": cell["revision"],
-})
+cell = await session.call(
+    "notebook__write_new_cell",
+    {
+        "notebook_name": "统计验证",
+        "source": 'result = Statistics.summarize([1.0, 2.0, 3.0])\nprint(result["mean"])',
+    },
+)
+result = await session.call(
+    "notebook__exec_cell",
+    {
+        "notebook_name": "统计验证",
+        "cell_id": cell["cell_id"],
+        "revision": cell["revision"],
+    },
+)
 ```
 
 代码中的类方法为同步调用形式，包括底层由宿主异步实现的方法。
@@ -894,11 +906,14 @@ from factor_demo.autoresearch_agent_v2.tools import TaskTools
 # session 是已有会话；storage_root 是模型工作目录之外的宿主专用目录。
 TaskTools.register(session, storage_root=run_dir / "host_state")
 async with session:
-    created = await session.call("task_create", {
-        "subject": "检查特征排名的稳定性",
-        "description": "完成重采样检查，报告 Top 10 特征的入选频率。",
-        "active_form": "正在检查排名稳定性",
-    })
+    created = await session.call(
+        "task_create",
+        {
+            "subject": "检查特征排名的稳定性",
+            "description": "完成重采样检查，报告 Top 10 特征的入选频率。",
+            "active_form": "正在检查排名稳定性",
+        },
+    )
     item_id = created["task"]["id"]
     await session.call("task_update", {"task_id": item_id, "status": "in_progress"})
     current = await session.call("task_list", {})
