@@ -277,7 +277,7 @@ def test_response_without_tool_injects_reminder_and_continues(
     assert len(requests) == 3
     reminder = {
         "role": "user",
-        "content": "请调用工具继续；如需结束本轮，请调用 finish(content) 提交最终回复。",
+        "content": "请调用工具继续；结束本轮请调用 finish。",
     }
     for request, content in zip(requests[1:], ["Plain response", "Another response"]):
         assert request["messages"][-2]["role"] == "assistant"
@@ -378,10 +378,10 @@ def test_custom_system_prompt_is_sent_to_model(monkeypatch, tmp_path):
     assert asyncio.run(loop.run("Start")) == "Done"
 
 
-def test_default_prompt_uses_finish_for_delivery_and_report_file_for_research():
-    """报告文件不应被误认为旧版的消息交付工具。"""
-    assert "report.md" in SYSTEM_PROMPT
+def test_default_prompt_uses_finish_for_delivery_and_artifacts_for_products():
+    """交付统一走 finish(content)，正式产物写入 artifacts/，没有旧版 report(content) 工具。"""
     assert "finish(content)" in SYSTEM_PROMPT
+    assert "artifacts/" in SYSTEM_PROMPT
     assert "report(content)" not in SYSTEM_PROMPT
 
 

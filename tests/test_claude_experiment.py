@@ -130,7 +130,13 @@ def test_gateway_pins_upstream_settings_and_serializes_streams(tmp_path, monkeyp
             "openai",
             "private-upstream-key",
         )
-        app = create_gateway(provider, RuntimeSettings(), "local-key", tmp_path, max_calls=2)
+        app = create_gateway(
+            provider,
+            RuntimeSettings(reasoning_effort="max"),
+            "local-key",
+            tmp_path,
+            max_calls=2,
+        )
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://test"
         ) as c:

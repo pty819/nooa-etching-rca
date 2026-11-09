@@ -25,6 +25,22 @@ from factor_demo.autoresearch_agent_v2.python_tools.typing import ClassDetails, 
 from factor_demo.autoresearch_agent_v2.sandboxing import Sandbox, SandboxConfig
 
 
+def live_kernel_processes():
+    """列出本测试进程下仍存活的 Jupyter kernel。
+
+    Linux sandbox 使用私有 PID 命名空间，kernel 内的 ``os.getpid()`` 不是宿主 PID，
+    因此只能从宿主侧检查 bwrap 子树里是否仍留有 kernel 进程。
+    """
+    live = []
+    for child in psutil.Process().children(recursive=True):
+        try:
+            if "ipykernel_launcher" in " ".join(child.cmdline() or []):
+                live.append(child)
+        except psutil.Error:
+            continue
+    return live
+
+
 def make_session(workdir, identity="main"):
     """创建使用占位模型的会话，不请求真实模型。"""
     state = SessionState(session_id=identity, agent_id=identity, task_id="task", workdir=workdir)
@@ -496,6 +512,7 @@ def test_timeout_and_cancellation_stop_async_tool_and_execution_process(
             await session.call("python__describe_class", {"class_name": "Counter"})
             await session.call("notebook__create_notebook", {"notebook_name": "analysis"})
             instance = counter_tool[1][0]
+            kernels_before = live_kernel_processes()
             running = asyncio.create_task(
                 execute_source(
                     session,
@@ -518,8 +535,11 @@ def test_timeout_and_cancellation_stop_async_tool_and_execution_process(
             assert disconnected["error"] == "kernel_disconnected"
             cells = await session.call("notebook__list_cells", {"notebook_name": "analysis"})
             assert cells["cells"][0]["status"] == ("cancelled" if cancel else "timeout")
-            pid = int((tmp_path / "worker.pid").read_text())
-            assert not psutil.pid_exists(pid)
+            # worker.pid 记录的是 sandbox 命名空间内的 PID，不能直接用宿主侧
+            # psutil.pid_exists 判断；改为确认超时前存在的 kernel 进程都已退出。
+            assert (tmp_path / "worker.pid").read_text().strip()
+            alive = {process.pid for process in live_kernel_processes()}
+            assert {process.pid for process in kernels_before}.isdisjoint(alive)
             after = await execute_source(
                 session, {"code": "print(Counter.read())"}, notebook_name="recovery"
             )
