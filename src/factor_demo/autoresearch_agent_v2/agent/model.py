@@ -27,6 +27,8 @@ class Model:
         """
         self.config = config
         self.usage_callback = usage_callback
+        self.last_usage: dict[str, Any] | None = None
+        """最近一次响应报告的原始用量；服务未报告时为 None，供预算计数读取。"""
 
     def count_tokens(
         self,
@@ -104,13 +106,14 @@ class Model:
             drop_params=False,
             **options,
         )
+        # LiteLLM 在服务未报告用量时可能完全省略 usage 属性。
+        try:
+            usage = response.usage
+        except AttributeError:
+            usage = None
+        self.last_usage = deepcopy(usage.model_dump()) if usage is not None else None
         if self.usage_callback is not None:
-            # LiteLLM 在服务未报告用量时可能完全省略 usage 属性。
-            try:
-                usage = response.usage
-            except AttributeError:
-                usage = None
-            self.usage_callback(deepcopy(usage.model_dump()) if usage is not None else None)
+            self.usage_callback(deepcopy(self.last_usage))
         if not response.choices:
             raise ValueError("Model response contains no message choice")
         return response.choices[0].message.model_dump()

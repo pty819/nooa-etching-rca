@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .autoresearch_agent_v2.agent import Session, SessionState
 from .autoresearch_agent_v2.agent.model import Model
-from .autoresearch_agent_v2.config import HistoryConfig, ModelConfig
+from .autoresearch_agent_v2.config import HistoryConfig, ModelConfig, RunLimits
 from .autoresearch_agent_v2.feature_verifier import FeatureAnalyzeVerifier
 from .autoresearch_agent_v2.python_tools import PythonTools
 from .autoresearch_agent_v2.sandboxing import SandboxConfig
@@ -123,6 +123,12 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
         history_config=HistoryConfig(
             context_window_tokens=settings.input_budget,
         ),
+        run_limits=RunLimits(
+            token_warning=settings.run_token_warning,
+            tool_call_warning=settings.run_tool_call_warning,
+            token_limit=settings.run_token_limit,
+            tool_call_limit=settings.run_tool_call_limit,
+        ),
     )
     session.register_dataset("DATASET", str(data_path), current.get("title", "当前会话数据"))
     SandboxTools.register(
@@ -131,6 +137,9 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
             workdir=state.workdir,
             read_paths=(data_path,),
             timeout_s=120,
+            memory_mb=settings.sandbox_memory_mb,
+            cpu_seconds=settings.sandbox_cpu_seconds,
+            pids=settings.sandbox_pids,
         ),
     )
     TaskTools.register(session, storage_root=folder / "tasks")

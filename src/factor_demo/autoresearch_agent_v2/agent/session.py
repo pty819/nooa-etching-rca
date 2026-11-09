@@ -8,7 +8,7 @@ from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from types import TracebackType
 from typing import Any, Self, TypeVar, cast
 
-from ..config import HistoryConfig
+from ..config import HistoryConfig, RunLimits
 from ..telemetry import print_session_startup
 from ..tools import StatefulTool, ToolFactory
 from .history import compact_history
@@ -31,6 +31,7 @@ class Session:
         *,
         system_prompt: str = SYSTEM_PROMPT,
         history_config: HistoryConfig | None = None,
+        run_limits: RunLimits | None = None,
     ) -> None:
         """创建会话，资源在 start 时才实例化。
 
@@ -39,6 +40,7 @@ class Session:
             state: 对话标识、工作目录和可序列化历史，不存放活资源。
             system_prompt: 各轮模型请求使用的系统提示词。
             history_config: 上下文预算、自动压缩百分比及默认保留轮数。
+            run_limits: 全任务累计 token 与工具调用预算；None 使用仅告警配置。
         """
         self.state = state
         self.loop = AgentLoop(
@@ -46,6 +48,7 @@ class Session:
             state,
             system_prompt=system_prompt,
             history_config=history_config,
+            run_limits=run_limits,
         )
         self._providers: dict[type[Any], Callable[[Session], AbstractAsyncContextManager[Any]]] = {}
         self._instances: dict[type[Any], Any] = {}

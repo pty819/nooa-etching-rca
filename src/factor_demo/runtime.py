@@ -24,6 +24,13 @@ class RuntimeSettings(BaseModel):
     summary_target_chars: int = 8000
     request_timeout: int = 1800
     review_provider: str = "auto"
+    run_token_warning: int = 1_000_000
+    run_tool_call_warning: int = 400
+    run_token_limit: int | None = None
+    run_tool_call_limit: int | None = None
+    sandbox_memory_mb: int | None = None
+    sandbox_cpu_seconds: int | None = None
+    sandbox_pids: int | None = None
 
     @model_validator(mode="after")
     def validate_limits(self):
@@ -40,6 +47,26 @@ class RuntimeSettings(BaseModel):
             raise ValueError("Thinking budget must leave room for an answer")
         if self.request_timeout < 1:
             raise ValueError("Invalid request timeout")
+        for name in ("run_token_warning", "run_tool_call_warning"):
+            if getattr(self, name) < 1:
+                raise ValueError(f"{name} must be positive")
+        for name in (
+            "run_token_limit",
+            "run_tool_call_limit",
+            "sandbox_memory_mb",
+            "sandbox_cpu_seconds",
+            "sandbox_pids",
+        ):
+            value = getattr(self, name)
+            if value is not None and value < 1:
+                raise ValueError(f"{name} must be positive when set")
+        if self.run_token_limit is not None and self.run_token_limit <= self.run_token_warning:
+            raise ValueError("run_token_limit must be greater than run_token_warning")
+        if (
+            self.run_tool_call_limit is not None
+            and self.run_tool_call_limit <= self.run_tool_call_warning
+        ):
+            raise ValueError("run_tool_call_limit must be greater than run_tool_call_warning")
         return self
 
     @property

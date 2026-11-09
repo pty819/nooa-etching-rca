@@ -30,6 +30,15 @@ class SandboxConfig(BaseModel):
     max_output_bytes: int = Field(default=262144, gt=0)
     """stdout 和 stderr 各自保留的字节上限；超出后继续排空管道。"""
 
+    memory_mb: int | None = Field(default=None, gt=0)
+    """单进程虚拟内存上限，单位 MiB；None 不限制，平台支持情况不同。"""
+
+    cpu_seconds: int | None = Field(default=None, gt=0)
+    """单进程 CPU 时间上限，单位秒；None 不限制。"""
+
+    pids: int | None = Field(default=None, gt=0)
+    """同一用户可运行的进程数上限；None 不限制，按宿主用户统计。"""
+
     @field_validator("workdir")
     @classmethod
     def validate_workdir(cls, value: Path) -> Path:

@@ -68,7 +68,30 @@ class Sandbox:
         """
         if self._closed:
             raise RuntimeError("Sandbox is closed")
-        return build_command(self._config, argv, self._reads, ipc_dir=ipc_dir)
+        backend, command = build_command(self._config, argv, self._reads, ipc_dir=ipc_dir)
+        return backend, self._wrap_with_limits(command)
+
+    def _resource_limit_prefix(self) -> list[str] | None:
+        """生成宿主侧的 ulimit 前缀；未配置任何资源上限时返回 None。"""
+        config = self._config
+        limits: list[str] = []
+        if config.cpu_seconds is not None:
+            limits.append(f"ulimit -t {config.cpu_seconds}")
+        if config.memory_mb is not None:
+            limits.append(f"ulimit -v {config.memory_mb * 1024}")
+        if config.pids is not None:
+            limits.append(f"ulimit -u {config.pids}")
+        if not limits:
+            return None
+        # 先应用资源上限再 exec 后端，限制随进程继承到隔离环境内部。
+        return ["/bin/sh", "-c", "set -e; " + "; ".join(limits) + '; exec "$@"', "sh"]
+
+    def _wrap_with_limits(self, argv: list[str]) -> list[str]:
+        """把已生成的隔离命令包在资源上限前缀内。"""
+        prefix = self._resource_limit_prefix()
+        if prefix is None:
+            return argv
+        return [*prefix, *argv]
 
     async def aclose(self) -> None:
         """撤销后续执行权限，取消并等待已经开始的执行完成清理。"""
@@ -111,6 +134,7 @@ class Sandbox:
         if "\0" in command:
             raise ValueError("command cannot contain NUL characters")
         backend, argv = build_command(self._config, ["/bin/sh", "-c", command], self._reads)
+        argv = self._wrap_with_limits(argv)
         # 单独跟踪执行任务，关闭时不取消借用资源的宿主协程。
         running = asyncio.create_task(
             execute_command(self._config, backend, argv, timeout, request_handler)
