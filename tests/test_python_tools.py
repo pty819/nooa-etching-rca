@@ -536,9 +536,10 @@ def test_timeout_and_cancellation_stop_async_tool_and_execution_process(
             cells = await session.call("notebook__list_cells", {"notebook_name": "analysis"})
             assert cells["cells"][0]["status"] == ("cancelled" if cancel else "timeout")
             # worker.pid 记录的是 sandbox 命名空间内的 PID，不能直接用宿主侧
-            # psutil.pid_exists 判断；改为确认宿主侧不再有存活的 kernel 进程。
+            # psutil.pid_exists 判断；改为确认超时前存在的 kernel 进程都已退出。
             assert (tmp_path / "worker.pid").read_text().strip()
-            assert live_kernel_processes() == kernels_before
+            alive = {process.pid for process in live_kernel_processes()}
+            assert {process.pid for process in kernels_before}.isdisjoint(alive)
             after = await execute_source(
                 session, {"code": "print(Counter.read())"}, notebook_name="recovery"
             )
