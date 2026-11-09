@@ -23,6 +23,7 @@ RESEARCH_INSTRUCTIONS = """# 每轮研究验证
 - finish 只允许在最近一次判词为 improved/regressed（通过验收）或显式 blocked 时使用。
 - 从未提交验证，或最近一次判词为 needs_revision 时，finish 会被拒绝并返回原因；必须继续验证。
 - 验证执行故障（error/cancelled）时宿主允许 finish，但最终结果会被标记为未验证；交付时必须如实说明验证未完成，不得声称已通过验收。
+- 宿主在形成 improved/regressed 判词时会记录 artifacts/ 下交付文件的 sha256；验收后若这些文件被改动，finish 会被拒绝并要求重新验证。因此通过后不要再修改已交付产物；确需修改时必须重新提交验证。
 
 其他规则：
 - 一次 wait=True 只返回最后一次提交的判词；前几轮的结论通过此前注入的验证反馈与本次 report 的跨轮比较体现，交付时应综合，而不是只依赖最后一次。

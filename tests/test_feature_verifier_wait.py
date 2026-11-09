@@ -310,3 +310,89 @@ def test_finish_allowed_with_unverified_marker_after_execution_error(tmp_path, m
                 notebooks._kernels.clear()
 
     asyncio.run(scenario())
+
+
+def write_artifact(workdir, relative, content):
+    """在工作目录下写入待绑定的交付产物。"""
+    path = workdir / "artifacts" / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def accepted_completion(status="improved"):
+    """构造返回固定通过判词的模拟验证模型。"""
+
+    async def complete(self, messages, *, tools=None):
+        return {
+            "role": "assistant",
+            "tool_calls": [tool_call("report", {"status": status, "feedback": "通过"}, "v1")],
+        }
+
+    return complete
+
+
+def test_finish_rejected_after_deliverable_changed(tmp_path, monkeypatch):
+    """验收后修改 artifacts/ 交付文件时 finish 被拒绝，需重新验证。"""
+    monkeypatch.setattr(VerifierModel, "completion", accepted_completion())
+
+    async def scenario():
+        model = Model(ModelConfig(model="openai/fixture", api_key="fixture"))
+        session = research_session(tmp_path, model)
+        async with session:
+            notebooks = session.resource(NotebookTools)
+            verifier = session.resource(FeatureAnalyzeVerifier)
+            write_artifact(tmp_path, "report.md", "第一版")
+            try:
+                assert (await submit_wait(session, notebooks))["accepted"] is True
+                assert (await verifier.status())["deliverables_stale"] is False
+                write_artifact(tmp_path, "report.md", "第二版")
+                assert (await verifier.status())["deliverables_stale"] is True
+                with pytest.raises(RuntimeError) as excinfo:
+                    await session.call("finish", {"content": "完成"})
+                assert "交付产物已变更" in str(excinfo.value)
+            finally:
+                notebooks._kernels.clear()
+
+    asyncio.run(scenario())
+
+
+def test_finish_allowed_after_accepted_verdict_with_unchanged_deliverables(tmp_path, monkeypatch):
+    """判词绑定的交付文件未变化时 finish 正常结束且不带未验证标记。"""
+    monkeypatch.setattr(VerifierModel, "completion", accepted_completion())
+
+    async def scenario():
+        model = Model(ModelConfig(model="openai/fixture", api_key="fixture"))
+        session = research_session(tmp_path, model)
+        async with session:
+            notebooks = session.resource(NotebookTools)
+            write_artifact(tmp_path, "figures/trend.png", "binary")
+            try:
+                assert (await submit_wait(session, notebooks))["accepted"] is True
+                assert await session.call("finish", {"content": "完成"}) == "完成"
+            finally:
+                notebooks._kernels.clear()
+
+    asyncio.run(scenario())
+
+
+def test_finish_marks_legacy_verdict_without_deliverables(tmp_path, monkeypatch):
+    """旧版判词没有交付产物哈希时允许收尾，但必须标注未绑定交付版本。"""
+    monkeypatch.setattr(VerifierModel, "completion", accepted_completion())
+
+    async def scenario():
+        model = Model(ModelConfig(model="openai/fixture", api_key="fixture"))
+        session = research_session(tmp_path, model)
+        async with session:
+            notebooks = session.resource(NotebookTools)
+            verifier = session.resource(FeatureAnalyzeVerifier)
+            try:
+                assert (await submit_wait(session, notebooks))["accepted"] is True
+                verifier.latest = {
+                    key: value for key, value in verifier.latest.items() if key != "deliverables"
+                }
+                result = await session.call("finish", {"content": "完成"})
+                assert "未绑定交付产物哈希" in result
+            finally:
+                notebooks._kernels.clear()
+
+    asyncio.run(scenario())
