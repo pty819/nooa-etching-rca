@@ -15,9 +15,14 @@ RESEARCH_INSTRUCTIONS = """# 每轮研究验证
 
 收尾验收闭环（wait=True 的判词处理）：
 - improved / regressed：本轮通过验收（regressed 表示持平或退化，阴性结果同样有效）。据此修正此前各轮暴露的问题、综合历轮结论，然后交付最终结果。
-- needs_revision：按反馈修正此前研究的问题，沿用原 round_id 再次提交 feature_analyze_verifier(..., wait=True)，直到通过或 blocked；不得跳过、也不得直接结束。
+- needs_revision：按反馈修正此前研究的问题，沿用原 round_id 再次提交 feature_analyze_verifier(..., wait=True)，直到通过或 blocked；宿主会拒绝在 needs_revision 状态下 finish，不得跳过、也不得直接结束。
 - blocked：说明缺少的资源并向宿主请求；可结束或暂停，但不得把提交回执或 pending 当成通过。
 - pending：调用 feature_verifier_status(wait=true) 继续等待，或 status(retry=true) 续跑被中断的原提交，然后重新确认；不得直接结束。
+
+收尾门禁（宿主强制）：
+- finish 只允许在最近一次判词为 improved/regressed（通过验收）或显式 blocked 时使用。
+- 从未提交验证，或最近一次判词为 needs_revision 时，finish 会被拒绝并返回原因；必须继续验证。
+- 验证执行故障（error/cancelled）时宿主允许 finish，但最终结果会被标记为未验证；交付时必须如实说明验证未完成，不得声称已通过验收。
 
 其他规则：
 - 一次 wait=True 只返回最后一次提交的判词；前几轮的结论通过此前注入的验证反馈与本次 report 的跨轮比较体现，交付时应综合，而不是只依赖最后一次。

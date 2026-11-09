@@ -8,6 +8,7 @@ import pytest
 from test_capabilities import public_case
 
 from factor_demo.autoresearch_agent_v2.agent.model import Model
+from factor_demo.autoresearch_agent_v2.feature_verifier.agent import FeatureAnalyzeVerifier
 from factor_demo.autoresearch_web import research_turn, restore_state
 from factor_demo.live_events import LiveEvents
 
@@ -39,6 +40,9 @@ def configure(monkeypatch):
 
 def test_turn_persists_tasks_results_and_frontend_events(tmp_path, monkeypatch):
     configure(monkeypatch)
+    # 本用例只验证 Web 持久化、交付与前端事件；收尾门禁语义由
+    # tests/test_feature_verifier_wait.py 覆盖，这里直接视为已验收。
+    monkeypatch.setattr(FeatureAnalyzeVerifier, "_acceptance", lambda self: (True, ""))
     run = public_case(tmp_path / "case")
     responses = iter(
         [

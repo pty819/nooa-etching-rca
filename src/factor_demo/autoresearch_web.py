@@ -136,7 +136,10 @@ async def _research_turn(run, provider_name, message, mode, events, timeout):
     TaskTools.register(session, storage_root=folder / "tasks")
     session.register_stateful_tool(FileTools)
     session.register_stateful_tool(PythonTools)
-    session.register_stateful_tool(FeatureAnalyzeVerifier)
+    if mode == "research":
+        # 讨论模式只读研究记录且不能提交验证，注册验证器会让收尾门禁无法满足。
+        session.register_stateful_tool(FeatureAnalyzeVerifier)
+
     write_json(
         run / "status.json",
         {
