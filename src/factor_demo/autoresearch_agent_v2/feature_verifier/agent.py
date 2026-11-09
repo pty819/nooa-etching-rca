@@ -17,7 +17,7 @@ from pydantic import Field
 
 from ..agent.model import Model
 from ..agent.typing import SessionState
-from ..sandboxing import SandboxConfig
+from ..sandboxing import Sandbox, SandboxConfig
 from ..tools import FileTools, NotebookTools, SandboxTools, ToolFactory
 from ..utils.file import FileToolError, WorkspaceFiles
 from .prompts import RESEARCH_INSTRUCTIONS, VERIFIER_PROMPT
@@ -281,7 +281,7 @@ class FeatureAnalyzeVerifier:
         self._save_control()
 
     async def _ensure_child(self) -> None:
-        """恢复同一任务的验证历史，并创建仅允许工作目录访问的独立沙箱。"""
+        """恢复同一任务的验证历史，并创建只用宿主授权读取范围的独立沙箱。"""
         from ..agent.session import Session
 
         if self.child is not None:
@@ -321,20 +321,24 @@ class FeatureAnalyzeVerifier:
         child.loop.tools.register_callable(
             "report", self.report, description="完成本轮验证，返回状态和有证据的反馈。"
         )
-        registration = self.parent.state.datasets.get("DATASET")
-        dataset_reads = ()
-        if registration:
-            data_path = Path(registration.path)
-            if not data_path.is_absolute():
-                data_path = self.parent.state.workdir / data_path
-            if data_path.exists():
-                dataset_reads = (data_path.resolve(),)
         SandboxTools.register(
-            child, config=SandboxConfig(workdir=state.workdir, read_paths=dataset_reads)
+            child, config=SandboxConfig(workdir=state.workdir, read_paths=self._host_read_paths())
         )
         child.register_stateful_tool(FileTools)
         child.register_stateful_tool(NotebookTools)
         self.child = child
+
+    def _host_read_paths(self) -> tuple[Path, ...]:
+        """返回宿主为父会话显式授权的只读路径。
+
+        只读取父会话实际创建的 Sandbox 配置；模型可调用的 DATASET 登记仅是
+        提示信息，不得作为验证子会话的读取授权来源。
+        """
+        try:
+            sandbox = self.parent.resource(Sandbox)
+        except RuntimeError:
+            return ()
+        return tuple(sandbox.config.read_paths)
 
     def _repair_history(self) -> None:
         """补齐中断工具调用的回执，支持同进程重试和进程恢复。"""
