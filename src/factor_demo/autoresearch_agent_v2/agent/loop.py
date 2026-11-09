@@ -3,9 +3,10 @@
 import json
 import logging
 
-from ..config import HistoryConfig
+from ..config import HistoryConfig, RunLimits
 from ..tools import create_tool_factory
 from ..tools.result_guard import protect_tool_result
+from .budget import RunBudget
 from .history import compact_history, get_context_messages
 from .model import Model
 from .prompts import SYSTEM_PROMPT, dataset_prompt
@@ -24,6 +25,7 @@ class AgentLoop:
         *,
         system_prompt: str = SYSTEM_PROMPT,
         history_config: HistoryConfig | None = None,
+        run_limits: RunLimits | None = None,
     ) -> None:
         """绑定模型和会话，注册 finish 工具。
 
@@ -32,6 +34,7 @@ class AgentLoop:
             session: 保存完整对话历史的会话。
             system_prompt: 每次模型请求使用的系统提示词。
             history_config: 上下文预算、自动压缩百分比及默认保留轮数。
+            run_limits: 全任务累计 token 与工具调用预算；None 使用仅告警配置。
 
         """
         self.model = model
@@ -40,6 +43,7 @@ class AgentLoop:
         self.tools = create_tool_factory()
         self.terminal_tool = "finish"
         self.history_config = history_config if history_config is not None else HistoryConfig()
+        self.budget = RunBudget(run_limits)
 
     async def before_run_hook(self, content: str) -> str:
         """在写入用户输入前执行钩子，默认原样返回。
@@ -139,6 +143,9 @@ class AgentLoop:
                     tools=schemas,
                 )
                 self.session.messages.append(message)
+                self.budget.record_usage(self.model.last_usage)
+                self.budget.enforce_tokens()
+                warnings = self.budget.new_warnings()
                 tool_calls = message.get("tool_calls") or []
                 if not tool_calls:
                     self.session.messages.append(
@@ -147,10 +154,13 @@ class AgentLoop:
                             "content": f"请调用工具继续；结束本轮请调用 {self.terminal_tool}。",
                         }
                     )
+                    self._append_budget_warnings(warnings)
                     continue
                 for index, tool_call in enumerate(tool_calls):
                     function = tool_call["function"]
                     failed = False
+                    self.budget.record_tool_call()
+                    self.budget.enforce_tool_calls()
                     try:
                         result = await self.tools.call(
                             function["name"],
@@ -181,5 +191,23 @@ class AgentLoop:
                                 }
                             )
                         return result
+                self._append_budget_warnings([*warnings, *self.budget.new_warnings()])
         finally:
             await self.after_run_hook()
+
+    def _append_budget_warnings(self, warnings: list[str]) -> None:
+        """在完整工具批次之后注入一次预算提醒，不打断工具消息协议。
+
+        Args:
+            warnings: 本轮新产生的提醒说明；为空时不写入消息。
+        """
+        if not warnings:
+            return
+        self.session.messages.append(
+            {
+                "role": "user",
+                "content": "[运行预算提醒] "
+                + "；".join(warnings)
+                + "。请收敛任务，必要时准备交付。",
+            }
+        )

@@ -5,6 +5,29 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 
+class RunLimits(BaseModel):
+    """全任务累计的 token 与工具调用预算。
+
+    默认只在达到提醒阈值时向模型注入告警；硬上限默认关闭，由宿主显式开启。
+    token 计数来自服务端返回的 usage，未报告用量的调用不计数。
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    """拒绝未知配置，保持同一次任务内的预算不变。"""
+
+    token_warning: int = Field(default=1_000_000, gt=0, strict=True)
+    """累计 token 达到该值时提醒一次；不是强制上限。"""
+
+    tool_call_warning: int = Field(default=400, gt=0, strict=True)
+    """累计工具调用达到该值时提醒一次；不是强制上限。"""
+
+    token_limit: int | None = Field(default=None, gt=0, strict=True)
+    """累计 token 硬上限；超过时终止当前任务。None 表示不设硬上限。"""
+
+    tool_call_limit: int | None = Field(default=None, gt=0, strict=True)
+    """累计工具调用硬上限；超过时终止当前任务。None 表示不设硬上限。"""
+
+
 class HistoryConfig(BaseModel):
     """配置上下文预算与自动压缩策略。"""
 
