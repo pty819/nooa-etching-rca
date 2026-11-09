@@ -162,7 +162,11 @@ def test_reasoning_controls_reach_sdk_request_body(tmp_path, monkeypatch, model,
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "send", send)
-    args = runner._parse_args(["--model", model, "--settings", str(settings_path)])
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    args = runner._parse_args(
+        ["--model", model, "--settings", str(settings_path), "--dataset", str(dataset)]
+    )
     config = runner._build_model_config(args)
     asyncio.run(runner.Model(config).completion([{"role": "user", "content": "核对请求"}]))
     assert len(requests) == 1
