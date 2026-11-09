@@ -248,9 +248,9 @@ AgentLoop 每次任务请求前检查输入 token，达到配置的百分比时�
 
 | 字段 | 默认值 | 含义 |
 |---|---|---|
-| `context_window_tokens` | `128000` | 会话的上下文 token 预算，按实际模型和服务限制设置 |
+| `context_window_tokens` | `172000` | 会话的上下文 token 预算，按实际模型和服务限制设置 |
 | `compact_trigger_percent` | `80` | 输入占预算的该百分比时触发，范围为大于 0、至多 100 |
-| `keep_recent_turns` | `1` | 压缩时保留的最近交互轮数；0 总结全部历史 |
+| `keep_recent_turns` | `2` | 压缩时保留的最近交互轮数；0 总结全部历史 |
 
 ```python
 from factor_demo.autoresearch_agent_v2.config import HistoryConfig
@@ -270,7 +270,7 @@ async with Session(model, state, history_config=history_config) as session:
 ```
 
 触发条件为 `input_tokens >= context_window_tokens × compact_trigger_percent / 100`。
-默认预算下，输入达到 102400 token 时触发。
+默认预算下，输入达到 137600 token 时触发。
 计数针对当前实际要发送的系统说明、数据集登记、有效历史、推理和工具调用信息；
 原生模式额外计入工具 Schema，JSON 模式在完成消息转换后计数，避免重复计入工具定义。
 使用现有 [LiteLLM token_counter](https://docs.litellm.ai/docs/completion/token_usage)，
