@@ -38,11 +38,16 @@ class ExecutionObservations:
         return doc
 
     def children(self, identity):
-        with self.connect() as db:
-            rows = [
-                json.loads(r[0]) for r in db.execute("SELECT doc FROM observations ORDER BY rowid")
-            ]
-        return [row for row in rows if row.get("parent_id") == identity]
+        """按创建顺序读取指定观察的直接子观察。
+
+        Args:
+            identity: 父观察标识。
+
+        Returns:
+            直接子观察文档列表；没有子观察时为空列表。
+        """
+        # 观察已经迁移到持久化服务，原实现直连数据库并调用已删除的 connect。
+        return [row for row in reversed(self._storage.list()) if row.get("parent_id") == identity]
 
     def resolve(self, failure, verification):
         self._storage.resolve(failure, verification)
