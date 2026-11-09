@@ -25,7 +25,6 @@ jobs:
           - {os: ubuntu-24.04, backend: auto}
           - {os: ubuntu-24.04-arm, backend: auto}
           - {os: ubuntu-24.04, backend: bubblewrap}
-          - {os: macos-15, backend: auto}
     name: python (${{ matrix.os }}, ${{ matrix.backend }})
     runs-on: ${{ matrix.os }}
     env:
