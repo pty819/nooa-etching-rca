@@ -203,20 +203,73 @@ class FeatureAnalyzeVerifier:
         return {"status": "pending", "submission_id": identity, "accepted": False, "reason": reason}
 
     async def _guarded_finish(self, **arguments) -> Any:
-        """收尾门禁：验证未完成时先等待，仍无法空闲则拒绝结束本轮。"""
+        """收尾门禁：要求最终交付经过验收，验证故障时允许未验证结束并标记。"""
         if self._busy():
             await self._wait_until_idle()
-        if self._busy():
-            raise RuntimeError(
-                "还有未完成或未报告的验证提交；请先调用 feature_verifier_status(wait=true) "
-                "等待，或 retry=true 续跑被中断的提交，处理完毕后再 finish 交付最终结果。"
-            )
+            if self._busy() and not self._recoverable_failure():
+                raise RuntimeError(
+                    "还有未完成或未报告的验证提交；请先调用 feature_verifier_status(wait=true) "
+                    "等待，或 retry=true 续跑被中断的提交，处理完毕后再 finish 交付最终结果。"
+                )
+        allowed, note = self._acceptance()
+        if not allowed:
+            raise RuntimeError(self._finish_rejection())
         if self._finish_impl is None:
             raise RuntimeError("finish 实现缺失，无法结束本轮")
         result = self._finish_impl(**arguments)
         if asyncio.iscoroutine(result):
-            return await result
+            result = await result
+        if note and isinstance(result, str):
+            return f"{result}\n\n[验证标记] {note}"
         return result
+
+    def _acceptance(self) -> tuple[bool, str]:
+        """判断研究会话能否收尾，返回 (是否允许, 未验证标记)。"""
+        latest = self.latest
+        if latest is None:
+            return False, ""
+        if latest.get("accepted") is True:
+            return True, ""
+        status = latest.get("status")
+        if status == "blocked":
+            return True, ""
+        if status in {"error", "cancelled"}:
+            return True, "本轮验证执行故障，最终结果未经验证"
+        return False, ""
+
+    def _finish_rejection(self) -> str:
+        """给出收尾被拒绝的具体原因与下一步动作。"""
+        latest = self.latest
+        if latest is None:
+            return (
+                "研究尚未提交任何验证；请先调用 feature_analyze_verifier(wait=true) 提交本轮研究，"
+                "取得 improved/regressed 或由验证器给出 blocked 后再 finish。"
+            )
+        if latest.get("status") == "needs_revision":
+            return (
+                "最近一次验证为 needs_revision；请按验证反馈修订研究，"
+                "沿用原 round_id 重新提交 feature_analyze_verifier(wait=true)，"
+                "取得 improved/regressed 或 blocked 后再 finish。"
+            )
+        return (
+            f"最近一次验证状态为 {latest.get('status')}，不能作为最终交付的验收依据；"
+            "请继续验证直到 improved/regressed 或 blocked。"
+        )
+
+    def _recoverable_failure(self) -> bool:
+        """判断当前未报告提交是否只是执行故障，允许按未验证结果收尾。"""
+        if self.task is not None and not self.task.done():
+            return False
+        if self.queue:
+            return False
+        current = self.current
+        latest = self.latest
+        return bool(
+            current is not None
+            and latest is not None
+            and latest.get("submission_id") == current.get("submission_id")
+            and latest.get("status") in {"error", "cancelled"}
+        )
 
     async def _wait_until_idle(self) -> None:
         """驱动后台队列直到空闲、无法继续推进或到达等待上限。"""
